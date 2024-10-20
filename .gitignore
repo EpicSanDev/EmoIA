@@ -1,0 +1,7 @@
+/old
+/gpt2_fine_tuned
+credentials.json
+token.json
+key.py
+.env
+ai_companion.db
