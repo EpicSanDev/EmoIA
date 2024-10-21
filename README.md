@@ -1,5 +1,5 @@
 # EmoIA
-Voici une description pour votre dépôt GitHub :
+
 
 ---
 
