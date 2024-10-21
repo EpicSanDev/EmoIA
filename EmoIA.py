@@ -83,6 +83,19 @@ import csv
 from nltk.tokenize import sent_tokenize
 from sklearn.metrics.pairwise import cosine_similarity
 from gensim.utils import simple_preprocess
+import matplotlib.pyplot as plt
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from io import BytesIO
+
+from datetime import datetime, timedelta, time as datetime_time
+from collections import Counter
+
+
+
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -305,7 +318,17 @@ def setup_database(cursor):
                   tags TEXT, 
                   relevance_score REAL DEFAULT 0, 
                   rating_count INTEGER DEFAULT 0)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS journal_entries
+                 (id INTEGER PRIMARY KEY, user_id TEXT, date TEXT, content TEXT, mood TEXT, activities TEXT, goals TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS calendar_events
+                 (id INTEGER PRIMARY KEY, user_id TEXT, event_name TEXT, start_time TEXT, end_time TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS personal_goals
+                 (id INTEGER PRIMARY KEY, user_id TEXT, goal_description TEXT, status TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS proactivity_logs
+                 (id INTEGER PRIMARY KEY, user_id TEXT, timestamp TEXT, score REAL, decision INTEGER)''')
+ 
     conn.commit()
+
 
 def initialize_gpt2():
     global gpt2_tokenizer, gpt2_model
@@ -488,6 +511,7 @@ def analyze_user_behavior(user_input, user_id):
     
     return behavior_analysis
 
+# Modification de la fonction analyze_emotion
 def analyze_emotion(text):
     try:
         result = sentiment_analyzer(text)[0]
@@ -511,7 +535,8 @@ def analyze_emotion(text):
             'sentiment': {
                 'label': sentiment_label,
                 'score': sentiment_score,
-                'vader': vader_sentiment
+                'vader': vader_sentiment,
+                'compound': vader_sentiment['compound']  # Ajout de la valeur 'compound'
             },
             'subjectivity': subjectivity
         }
@@ -519,7 +544,7 @@ def analyze_emotion(text):
         logger.error(f"Erreur lors de l'analyse de l'émotion: {str(e)}")
         return {
             'emotion': 'unknown',
-            'sentiment': {'label': 'unknown', 'score': 0, 'vader': {'compound': 0}},
+            'sentiment': {'label': 'unknown', 'score': 0, 'vader': {'compound': 0}, 'compound': 0},
             'subjectivity': 0
         }
 
@@ -669,12 +694,157 @@ def handle_message(update, context):
 
         check_proactive_actions(update, context, user_id, user_profile, user_analysis, semantic_analysis)
 
+        # Générer une entrée de journal quotidienne
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        c.execute("SELECT id FROM journal_entries WHERE user_id = ? AND date = ?", (user_id, current_date))
+        if not c.fetchone():
+            journal_entry = generate_journal_entry(user_id)
+            context.bot.send_message(chat_id=update.effective_chat.id, text="J'ai généré votre entrée de journal pour aujourd'hui. Vous pouvez la consulter en utilisant la commande /journal.")
+
     except Exception as e:
         logger.error(f"Error in handle_message: {e}")
         logger.error(traceback.format_exc())
         response = "Je suis désolé, j'ai rencontré une erreur en traitant votre message. Pourriez-vous reformuler ou essayer à nouveau plus tard ?"
 
     context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+
+    # Vérifier si une réponse proactive est nécessaire
+    if should_send_proactive_message(user_id, user_analysis):
+        proactive_response = generate_proactive_response(user_id, user_profile, user_analysis)
+        context.bot.send_message(chat_id=update.effective_chat.id, text=proactive_response)
+
+
+def should_send_proactive_message(user_id, user_analysis):
+    try:
+        # Récupérer le timestamp de la dernière interaction
+        c.execute("SELECT MAX(timestamp) FROM memory WHERE user_id = ?", (user_id,))
+        last_interaction = c.fetchone()[0]
+        
+        # Calculer le temps écoulé depuis la dernière interaction
+        time_since_last_interaction = time.time() - ensure_float(last_interaction or 0)
+        
+        # Récupérer l'humeur actuelle de l'utilisateur
+        current_mood = user_analysis.get('emotions', {}).get('emotion', 'neutral')
+        
+        # Récupérer le profil de l'utilisateur
+        user_profile = get_user_profile(user_id)
+        
+        # Calculer le score de proactivité
+        proactivity_score = 0
+        
+        # Facteur 1: Temps écoulé depuis la dernière interaction
+        if time_since_last_interaction > 86400:  # Plus de 24 heures
+            proactivity_score += 0.3
+        elif time_since_last_interaction > 43200:  # Plus de 12 heures
+            proactivity_score += 0.2
+        elif time_since_last_interaction > 21600:  # Plus de 6 heures
+            proactivity_score += 0.1
+        
+        # Facteur 2: Humeur de l'utilisateur
+        if current_mood in ['sad', 'angry', 'frustrated']:
+            proactivity_score += 0.2
+        elif current_mood in ['happy', 'excited']:
+            proactivity_score += 0.1
+        
+        # Facteur 3: Heure de la journée
+        current_hour = datetime.now().hour
+        if 9 <= current_hour <= 11 or 14 <= current_hour <= 16:  # Heures de pointe d'activité
+            proactivity_score += 0.1
+        
+        # Facteur 4: Jour de la semaine
+        if datetime.now().weekday() < 5:  # Jours de semaine
+            proactivity_score += 0.1
+        
+        # Facteur 5: Préférence de l'utilisateur pour les messages proactifs
+        user_proactivity_preference = ensure_float(user_profile.get('proactivity_preference', '0.5'))
+        proactivity_score *= user_proactivity_preference
+        
+        # Facteur 6: Tâches en attente
+        pending_tasks = get_pending_tasks(user_id)
+        if pending_tasks:
+            proactivity_score += 0.1
+        
+        # Facteur 7: Événements à venir
+        upcoming_events = get_upcoming_events(user_id)
+        if upcoming_events:
+            proactivity_score += 0.1
+        
+        # Facteur 8: Objectifs non atteints
+        unachieved_goals = get_unachieved_goals(user_id)
+        if unachieved_goals:
+            proactivity_score += 0.1
+        
+        # Décision finale
+        threshold = 0.6  # Seuil de décision
+        should_send = proactivity_score > threshold
+        
+        # Enregistrer la décision pour l'apprentissage futur
+        log_proactivity_decision(user_id, proactivity_score, should_send)
+        
+        return should_send
+
+    except Exception as e:
+        logger.error(f"Erreur dans should_send_proactive_message: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False  # En cas d'erreur, on ne recommande pas d'envoyer un message proactif
+
+def ensure_float(value):
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    elif isinstance(value, (int, float)):
+        return float(value)
+    else:
+        return 0.0
+
+
+def get_upcoming_events(user_id):
+    try:
+        # Récupérer les événements à venir dans les 24 prochaines heures
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+        c.execute("SELECT * FROM calendar_events WHERE user_id = ? AND start_time <= ? ORDER BY start_time", (user_id, tomorrow))
+        return c.fetchall()
+    except Exception as e:
+        logger.error(f"Erreur dans get_upcoming_events: {str(e)}")
+        return []
+
+
+def get_unachieved_goals(user_id):
+    try:
+        # Récupérer les objectifs non atteints
+        c.execute("SELECT * FROM personal_goals WHERE user_id = ? AND status != 'achieved'", (user_id,))
+        return c.fetchall()
+    except Exception as e:
+        logger.error(f"Erreur dans get_unachieved_goals: {str(e)}")
+        return []
+
+def log_proactivity_decision(user_id, score, decision):
+    try:
+        # Enregistrer la décision pour l'apprentissage futur
+        c.execute("INSERT INTO proactivity_logs (user_id, timestamp, score, decision) VALUES (?, ?, ?, ?)",
+                  (user_id, time.time(), score, int(decision)))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Erreur dans log_proactivity_decision: {str(e)}")
+
+
+
+def generate_proactive_response(user_id, user_profile, user_analysis):
+    prompt = f"""
+    Based on the following user profile and analysis, generate a proactive message to engage the user:
+    User Profile: {json.dumps(user_profile)}
+    User Analysis: {json.dumps(user_analysis)}
+
+    The message should be:
+    1. Relevant to the user's interests or recent activities
+    2. Encouraging or supportive
+    3. Open-ended to invite further conversation
+
+    Proactive Message:
+    """
+    return get_gpt4_response(prompt, max_tokens=100)
 
 def update_user_profile_from_interaction(user_id, user_input, response, user_analysis, semantic_analysis):
     for trait, value in user_analysis['personality'].items():
@@ -711,16 +881,17 @@ def update_conversation_topics(user_id, text):
     
     update_user_profile(user_id, 'conversation_topics', json.dumps(topics))
 
+# Modification de la fonction calculate_importance
 def calculate_importance(user_input, response, user_analysis, semantic_analysis):
     importance_factors = {
-        'sentiment_intensity': abs(user_analysis['polarity']) * 2,
-        'subjectivity': user_analysis['subjectivity'],
+        'sentiment_intensity': abs(ensure_float(user_analysis['polarity'])) * 2,
+        'subjectivity': ensure_float(user_analysis['subjectivity']),
         'entity_relevance': len(semantic_analysis['entities']) / 10,
-        'complexity_match': 1 - abs(semantic_analysis['complexity_score'] - float(user_analysis.get('language_complexity', '0'))) / 10,
+        'complexity_match': 1 - abs(semantic_analysis['complexity_score'] - ensure_float(user_analysis.get('language_complexity', '0'))) / 10,
         'keyword_relevance': len(set(semantic_analysis['keywords']).intersection(set(user_analysis.get('interests', [])))) / 10,
         'response_length': min(len(response) / 500, 1),
         'question_asked': 1 if '?' in user_input else 0,
-        'emotional_content': max(user_analysis.get('emotions', {}).values()) if 'emotions' in user_analysis else 0
+        'emotional_content': max([ensure_float(v) for v in user_analysis.get('emotions', {}).values()]) if 'emotions' in user_analysis else 0
     }
     return sum(importance_factors.values()) / len(importance_factors)
 
@@ -1015,6 +1186,7 @@ def error_handler(update, context):
     if update and update.effective_message:
         update.effective_message.reply_text("Désolé, une erreur s'est produite lors du traitement de votre message. Veuillez réessayer plus tard.")
 
+
 def main():
     updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
@@ -1028,8 +1200,7 @@ def main():
     dp.add_handler(CommandHandler("learn", handle_learn_command))
     dp.add_handler(CommandHandler("knowledge", knowledge_base_menu))
     dp.add_handler(CallbackQueryHandler(handle_query))
-    
-    # Ajout du gestionnaire pour les documents
+    dp.add_handler(CommandHandler("journal", view_journal))
     dp.add_handler(MessageHandler(Filters.document, handle_document_upload))
     
     dp.add_error_handler(error_handler)
@@ -1038,10 +1209,33 @@ def main():
     updater.job_queue.run_repeating(lambda _: continuous_learning(), interval=86400, first=0)
     updater.job_queue.run_repeating(initiate_conversation, interval=3600, first=0)
     updater.job_queue.run_repeating(lambda _: update_models_and_knowledge(), interval=604800, first=0)  # Weekly update
+    
+    # Nouvelle tâche planifiée pour générer et envoyer le PDF quotidien
+    updater.job_queue.run_daily(send_daily_pdf, time=datetime_time(hour=23, minute=55))
 
     updater.start_polling()
     logger.info("Bot started successfully with advanced AI capabilities.")
     updater.idle()
+
+
+def send_daily_pdf(context: CallbackContext):
+    for user_id in get_active_users():
+        try:
+            date = datetime.datetime.now().strftime("%Y-%m-%d")
+            pdf_buffer = generate_daily_pdf(user_id, date)
+            context.bot.send_document(
+                chat_id=user_id,
+                document=pdf_buffer,
+                filename=f"rapport_quotidien_{date}.pdf",
+                caption="Voici votre rapport quotidien stylisé !"
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi du PDF quotidien à l'utilisateur {user_id}: {str(e)}")
+
+def get_active_users():
+    # Récupérer la liste des utilisateurs actifs depuis la base de données
+    c.execute("SELECT DISTINCT user_id FROM journal_entries")
+    return [row[0] for row in c.fetchall()]
 
 def continuous_learning():
     logger.info("Starting continuous learning process")
@@ -1232,15 +1426,22 @@ def initialize_user_profile(user_id):
 def handle_analysis_command(update, context):
     user_id = update.effective_user.id
     personality = analyze_personality(user_id)
-    recent_topics = improved_topic_modeling([conv[1] for conv in conversation_manager.get_recent_conversation(user_id, n=50)])
+    recent_conversations = [conv[1] for conv in conversation_manager.get_recent_conversation(user_id, n=50)]
     
+    topics_result = improved_topic_modeling(recent_conversations)
+    
+    if "error" in topics_result:
+        topic_analysis = f"Erreur lors de l'analyse des sujets : {topics_result['error']}"
+    else:
+        topic_analysis = json.dumps(topics_result, indent=2)
+
     analysis_text = f"""Voici une analyse de vos interactions récentes :
 
 Profil de personnalité :
 {json.dumps(personality, indent=2)}
 
 Sujets d'intérêt récents :
-{json.dumps(recent_topics, indent=2)}
+{topic_analysis}
 
 Cette analyse est basée sur vos conversations récentes et peut aider à personnaliser nos futures interactions."""
 
@@ -1270,19 +1471,33 @@ def update_knowledge_graph(text):
                     knowledge_graph.add_relationship(subject, obj, verb)
 
 def improved_topic_modeling(texts, num_topics=5):
-    vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
-    doc_term_matrix = vectorizer.fit_transform(texts)
-    
-    lda_model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
-    lda_output = lda_model.fit_transform(doc_term_matrix)
-    
-    feature_names = vectorizer.get_feature_names()
-    topics = {}
-    for topic_idx, topic in enumerate(lda_model.components_):
-        top_words = [feature_names[i] for i in topic.argsort()[:-10 - 1:-1]]
-        topics[f"Topic {topic_idx + 1}"] = top_words
-    
-    return topics
+    if not texts:
+        return {"error": "No texts provided"}
+
+    # Assurez-vous que les textes ne sont pas vides et contiennent des mots non-stop
+    non_empty_texts = [text for text in texts if text.strip()]
+    if not non_empty_texts:
+        return {"error": "All texts are empty or contain only stop words"}
+
+    try:
+        vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
+        doc_term_matrix = vectorizer.fit_transform(non_empty_texts)
+        
+        if doc_term_matrix.shape[1] == 0:
+            return {"error": "No features were extracted. Check if texts contain enough unique words."}
+
+        lda_model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
+        lda_output = lda_model.fit_transform(doc_term_matrix)
+        
+        feature_names = vectorizer.get_feature_names_out()
+        topics = {}
+        for topic_idx, topic in enumerate(lda_model.components_):
+            top_words = [feature_names[i] for i in topic.argsort()[:-10 - 1:-1]]
+            topics[f"Topic {topic_idx + 1}"] = top_words
+        
+        return topics
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}
 
 def extract_keywords(text):
     doc = nlp(text)
@@ -1686,6 +1901,235 @@ def semantic_search(query, documents, model):
     
     return [(documents[i], similarities[i]) for i in sorted_indexes]
 
+
+# Nouvelle fonction pour générer une entrée de journal
+def generate_journal_entry(user_id):
+    # Récupérer les données pertinentes
+    user_profile = get_user_profile(user_id)
+    recent_interactions = get_recent_interactions(user_id, limit=10)
+    daily_tasks = get_pending_tasks(user_id)
+    
+    # Analyser l'humeur générale
+    mood = analyze_overall_mood(recent_interactions)
+    
+    # Extraire les activités principales
+    activities = extract_main_activities(recent_interactions)
+    
+    # Identifier les objectifs en cours
+    goals = get_user_goals(user_id)
+    
+    # Générer le contenu du journal
+    prompt = f"""
+    Based on the following information, generate a detailed journal entry for the user:
+    
+    User Profile: {json.dumps(user_profile)}
+    Recent Interactions: {json.dumps(recent_interactions)}
+    Daily Tasks: {json.dumps(daily_tasks)}
+    Overall Mood: {mood}
+    Main Activities: {activities}
+    Current Goals: {goals}
+    
+    The journal entry should include:
+    1. A summary of the day's events and interactions
+    2. Reflections on the user's mood and emotional state
+    3. Progress towards goals and daily tasks
+    4. Insights or lessons learned
+    5. Plans or intentions for the near future
+    
+    Write the entry in a personal, reflective tone as if the user wrote it themselves.
+    """
+    
+    journal_content = get_gpt4_response(prompt, max_tokens=500)
+    
+    # Enregistrer l'entrée dans la base de données
+    c.execute("""
+    INSERT INTO journal_entries (user_id, date, content, mood, activities, goals)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, datetime.datetime.now().strftime("%Y-%m-%d"), journal_content, mood, json.dumps(activities), json.dumps(goals)))
+    conn.commit()
+    
+    return journal_content
+
+
+# Modification de la fonction analyze_overall_mood
+def analyze_overall_mood(interactions):
+    try:
+        sentiments = [analyze_emotion(interaction['user_input'])['sentiment']['compound'] for interaction in interactions]
+        average_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+        
+        if average_sentiment > 0.3:
+            return "positive"
+        elif average_sentiment < -0.3:
+            return "negative"
+        else:
+            return "neutral"
+    except Exception as e:
+        logger.error(f"Erreur dans analyze_overall_mood: {str(e)}")
+        return "neutral"  # Valeur par défaut en cas d'erreur
+
+# Fonction pour extraire les activités principales
+def extract_main_activities(interactions):
+    activities = []
+    for interaction in interactions:
+        doc = nlp(interaction['user_input'])
+        for ent in doc.ents:
+            if ent.label_ in ["EVENT", "FAC", "GPE", "LOC", "ORG"]:
+                activities.append(ent.text)
+    return list(set(activities))  # Éliminer les doublons
+
+# Fonction pour récupérer les objectifs de l'utilisateur
+def get_user_goals(user_id):
+    c.execute("SELECT goal_description FROM personal_goals WHERE user_id = ? AND status = 'in_progress'", (user_id,))
+    return [row[0] for row in c.fetchall()]
+
+# Fonction pour récupérer les entrées de journal récentes
+def get_recent_journal_entries(user_id, limit=7):
+    c.execute("SELECT date, content FROM journal_entries WHERE user_id = ? ORDER BY date DESC LIMIT ?", (user_id, limit))
+    return c.fetchall()
+
+
+# Nouvelle commande pour consulter le journal
+def view_journal(update, context):
+    user_id = update.effective_user.id
+    entries = get_recent_journal_entries(user_id)
+    
+    if not entries:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Vous n'avez pas encore d'entrées de journal.")
+        return
+    
+    for date, content in entries:
+        message = f"📅 {date}\n\n{content[:1000]}..."  # Limiter la longueur pour éviter les messages trop longs
+        context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+
+
+
+def generate_daily_pdf(user_id, date):
+    # Récupérer les données nécessaires
+    journal_entry = get_journal_entry(user_id, date)
+    emotion_stats = get_emotion_stats(user_id, date)
+    daily_summary = get_daily_summary(user_id, date)
+    
+    # Créer le document PDF
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    story = []
+    
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = styles['Heading1']
+    subtitle_style = styles['Heading2']
+    normal_style = styles['Normal']
+    
+    # Titre
+    story.append(Paragraph(f"Rapport quotidien - {date}", title_style))
+    story.append(Spacer(1, 12))
+    
+    # Journal
+    story.append(Paragraph("Journal du jour", subtitle_style))
+    story.append(Paragraph(journal_entry, normal_style))
+    story.append(Spacer(1, 12))
+    
+    # Statistiques émotionnelles
+    story.append(Paragraph("Statistiques émotionnelles", subtitle_style))
+    
+    # Créer un graphique des émotions
+    plt.figure(figsize=(6, 4))
+    plt.bar(emotion_stats.keys(), emotion_stats.values())
+    plt.title("Émotions du jour")
+    plt.ylabel("Intensité")
+    
+    # Sauvegarder le graphique dans un buffer
+    img_buffer = BytesIO()
+    plt.savefig(img_buffer, format='png')
+    img_buffer.seek(0)
+    
+    # Ajouter le graphique au PDF
+    img = Image(img_buffer)
+    img.drawHeight = 3*inch
+    img.drawWidth = 4*inch
+    story.append(img)
+    
+    # Résumé de la journée
+    story.append(Paragraph("Résumé de la journée", subtitle_style))
+    story.append(Paragraph(daily_summary, normal_style))
+    
+    # Construire le PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+def get_journal_entry(user_id, date):
+    conn = sqlite3.connect('ai_companion.db')
+    c = conn.cursor()
+    c.execute("SELECT content FROM journal_entries WHERE user_id = ? AND date = ?", (user_id, date))
+    result = c.fetchone()
+    conn.close()
+    
+    if result:
+        return result[0]
+    else:
+        return "Pas d'entrée de journal pour aujourd'hui."
+
+def get_emotion_stats(user_id, date):
+    conn = sqlite3.connect('ai_companion.db')
+    c = conn.cursor()
+    
+    # Récupérer toutes les interactions de la journée
+    start_of_day = datetime.strptime(date, "%Y-%m-%d")
+    end_of_day = start_of_day + timedelta(days=1)
+    c.execute("""
+        SELECT emotion FROM memory 
+        WHERE user_id = ? AND timestamp >= ? AND timestamp < ?
+    """, (user_id, start_of_day.timestamp(), end_of_day.timestamp()))
+    
+    emotions = [eval(row[0])['emotion'] for row in c.fetchall()]
+    conn.close()
+    
+    # Compter les occurrences de chaque émotion
+    emotion_counts = Counter(emotions)
+    
+    # Normaliser les comptes pour obtenir des pourcentages
+    total = sum(emotion_counts.values())
+    emotion_stats = {emotion: count/total for emotion, count in emotion_counts.items()}
+    
+    return emotion_stats
+
+def get_daily_summary(user_id, date):
+    conn = sqlite3.connect('ai_companion.db')
+    c = conn.cursor()
+    
+    # Récupérer les interactions de la journée
+    start_of_day = datetime.strptime(date, "%Y-%m-%d")
+    end_of_day = start_of_day + timedelta(days=1)
+    c.execute("""
+        SELECT user_input, bot_response FROM memory 
+        WHERE user_id = ? AND timestamp >= ? AND timestamp < ?
+    """, (user_id, start_of_day.timestamp(), end_of_day.timestamp()))
+    
+    interactions = c.fetchall()
+    conn.close()
+    
+    # Générer un résumé avec GPT-4
+    interaction_text = "\n".join([f"User: {input}\nAI: {response}" for input, response in interactions])
+    prompt = f"""
+    Résumez la journée de l'utilisateur en vous basant sur les interactions suivantes :
+    
+    {interaction_text}
+    
+    Fournissez un résumé concis qui met en évidence :
+    1. Les principaux sujets de conversation
+    2. Les activités ou tâches mentionnées
+    3. L'humeur générale de l'utilisateur
+    4. Toute décision ou réalisation importante
+    
+    Résumé :
+    """
+    
+    summary = get_gpt4_response(prompt, max_tokens=200)
+    return summary
+
+
 # Fonction principale
 
 if __name__ == '__main__':
@@ -1694,7 +2138,6 @@ if __name__ == '__main__':
     
     setup_database(c)
     alter_knowledge_base_table(c)
-    
     initialize_gpt2()
     vgg_model = VGG16(weights='imagenet', include_top=False)
     gpt2_tokenizer = transformers.GPT2Tokenizer.from_pretrained("gpt2")
