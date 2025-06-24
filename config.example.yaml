@@ -1,0 +1,132 @@
+# Configuration EmoIA - Intelligence Artificielle Émotionnelle
+# Exemple de configuration avec tous les paramètres disponibles
+
+# Métadonnées de l'application
+app_name: "EmoIA"
+version: "2.0.0"
+debug: false
+log_level: "INFO"
+
+# Répertoires de données
+data_dir: "data"
+models_dir: "models" 
+logs_dir: "logs"
+cache_dir: "cache"
+
+# Configuration des modèles IA locaux
+models:
+  # Modèle principal de conversation (local)
+  language_model: "microsoft/DialoGPT-medium"  # Ou "gpt2", "facebook/blenderbot-400M-distill"
+  language_model_device: "auto"  # "auto", "cpu", "cuda"
+  language_model_max_length: 512
+  
+  # Modèle d'embedding pour similarité sémantique  
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  
+  # Modèles d'analyse émotionnelle
+  emotion_model: "j-hartmann/emotion-english-distilroberta-base"
+  sentiment_model: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+  
+  # Modèles audio et vision
+  speech_model: "openai/whisper-base"
+  tts_model: "local"
+  vision_model: "google/vit-base-patch16-224"
+
+# Configuration du système émotionnel
+emotional:
+  # Paramètres d'empathie et adaptation
+  empathy_threshold: 0.7
+  emotional_memory_decay: 0.95
+  mood_adaptation_rate: 0.3
+  
+  # Personnalité de base de l'IA
+  base_personality:
+    openness: 0.8          # Ouverture d'esprit
+    conscientiousness: 0.7 # Conscienciosité  
+    extraversion: 0.6      # Extraversion
+    agreeableness: 0.9     # Bienveillance
+    neuroticism: 0.2       # Névrosisme
+  
+  # Paramètres émotionnels
+  emotional_intensity: 0.8       # Intensité des réponses émotionnelles
+  emotional_consistency: 0.7     # Cohérence émotionnelle
+  emotional_learning_rate: 0.1   # Vitesse d'apprentissage émotionnel
+  
+  # Émotions supportées
+  supported_emotions:
+    - "joy"
+    - "sadness" 
+    - "anger"
+    - "fear"
+    - "surprise"
+    - "disgust"
+    - "love"
+    - "excitement"
+    - "anxiety"
+    - "contentment"
+    - "curiosity"
+
+# Configuration du système de mémoire
+memory:
+  # Mémoire à court terme
+  short_term_capacity: 100
+  short_term_relevance_threshold: 0.6
+  
+  # Mémoire à long terme
+  long_term_capacity: 10000
+  long_term_importance_threshold: 0.8
+  memory_consolidation_interval: 3600  # secondes
+  
+  # Mémoire sémantique
+  semantic_similarity_threshold: 0.75
+  knowledge_retention_days: 365
+  
+  # Base de données
+  database_url: "sqlite:///emoia_memory.db"
+  redis_url: null  # Optionnel pour cache distribué
+
+# Configuration des interfaces de communication
+communication:
+  # Bot Telegram (optionnel)
+  telegram_token: null
+  telegram_webhook_url: null
+  
+  # API REST
+  api_host: "localhost"
+  api_port: 8000
+  api_debug: false
+  
+  # WebSocket pour temps réel
+  websocket_enabled: true
+  websocket_port: 8001
+  
+  # Sécurité
+  api_key: null
+  rate_limit_per_minute: 60
+
+# Configuration de l'apprentissage
+learning:
+  # Apprentissage continu
+  continuous_learning: true
+  learning_rate: 0.001
+  adaptation_speed: 0.1
+  
+  # Apprentissage par renforcement
+  rl_enabled: true
+  rl_exploration_rate: 0.1
+  rl_discount_factor: 0.95
+  
+  # Mise à jour des modèles
+  model_update_interval: 86400  # 24h en secondes
+  auto_fine_tuning: true
+  fine_tuning_batch_size: 32
+  
+  # Feedback utilisateur
+  feedback_weight: 2.0
+  negative_feedback_penalty: 0.5
+
+# Configuration de performance
+max_concurrent_requests: 10
+request_timeout: 30
+cache_ttl: 3600

@@ -1,0 +1,82 @@
+# Core dependencies
+torch>=2.0.0
+transformers>=4.35.0
+sentence-transformers>=2.2.2
+accelerate>=0.20.0
+
+# Local AI Models
+llama-cpp-python>=0.2.20
+onnxruntime>=1.16.0
+optimum>=1.13.0
+
+# Emotional AI & NLP
+spacy>=3.7.0
+nltk>=3.8.0
+textblob>=0.17.1
+vaderSentiment>=3.3.2
+langdetect>=1.0.9
+emoji>=2.8.0
+
+# Audio Processing
+soundfile>=0.12.1
+librosa>=0.10.0
+speechrecognition>=3.10.0
+gtts>=2.4.0
+pydub>=0.25.1
+
+# Image Processing
+Pillow>=10.0.0
+opencv-python>=4.8.0
+scikit-image>=0.21.0
+
+# Data Science & ML
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Database & Storage
+sqlite3
+sqlalchemy>=2.0.0
+redis>=5.0.0
+
+# Web & Communication
+python-telegram-bot>=20.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=11.0
+
+# Configuration & Utils
+pydantic>=2.4.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+click>=8.1.0
+rich>=13.6.0
+tqdm>=4.66.0
+
+# Document Processing
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+openpyxl>=3.1.0
+
+# Personality & Psychology
+personality-insights>=0.1.0
+psychological-assessment>=0.2.0
+
+# Memory & Knowledge
+chromadb>=0.4.0
+faiss-cpu>=1.7.4
+networkx>=3.2.0
+
+# Testing & Quality
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.9.0
+flake8>=6.1.0
+mypy>=1.6.0
+
+# Documentation
+sphinx>=7.2.0
+mkdocs>=1.5.0
