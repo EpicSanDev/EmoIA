@@ -2,18 +2,28 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import './App.css';
 import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler
 } from 'chart.js';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
+import EmotionWheel from './components/EmotionWheel';
+import PersonalityRadar from './components/PersonalityRadar';
+import MoodHistory from './components/MoodHistory';
+import VoiceInput from './components/VoiceInput';
+import ConversationInsights from './components/ConversationInsights';
+import SmartSuggestions from './components/SmartSuggestions';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler);
 
 // Interfaces
 interface Message {
+  id: string;
   sender: 'user' | 'emoia';
   text: string;
   emotion?: any;
+  timestamp: Date;
+  audioUrl?: string;
+  confidence?: number;
 }
 
 interface Preferences {
@@ -24,6 +34,19 @@ interface Preferences {
     push: boolean;
     sound: boolean;
   };
+  ai_settings?: {
+    personality_style: 'professional' | 'friendly' | 'casual' | 'empathetic';
+    response_length: 'concise' | 'detailed' | 'balanced';
+    emotional_intelligence_level: number;
+  };
+}
+
+interface EmotionalAnalysis {
+  dominant_emotion: string;
+  emotion_scores: { [key: string]: number };
+  valence: number;
+  arousal: number;
+  confidence: number;
 }
 
 // Constants
@@ -31,14 +54,21 @@ const API_URL = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8001/ws/chat';
 
 function App() {
-  const { t } = useTranslation();
-  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences'>('chat');
+  const { t, i18n } = useTranslation();
+  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences' | 'insights'>('chat');
   const [userId, setUserId] = useState<string>('demo-user');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [analytics, setAnalytics] = useState<any>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [currentEmotions, setCurrentEmotions] = useState<any[]>([]);
+  const [personalityProfile, setPersonalityProfile] = useState<any>(null);
+  const [moodHistory, setMoodHistory] = useState<any[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [showInsights, setShowInsights] = useState(true);
+  const [showSuggestions, setShowSuggestions] = useState(true);
+  
   const [preferences, setPreferences] = useState<Preferences>({
     language: 'fr',
     theme: 'light',
@@ -46,13 +76,18 @@ function App() {
       email: true,
       push: false,
       sound: true
+    },
+    ai_settings: {
+      personality_style: 'empathetic',
+      response_length: 'balanced',
+      emotional_intelligence_level: 0.8
     }
   });
+  
   const [prefsStatus, setPrefsStatus] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-
-  const [lang, setLang] = useState<'en' | 'fr' | 'es'>(localStorage.getItem('emoia-lang') || 'fr');
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Appliquer le thème
   useEffect(() => {
@@ -65,16 +100,16 @@ function App() {
 
   useEffect(scrollToBottom, [messages]);
 
-  // Charger les préférences au démarrage
+  // Charger les préférences et initialiser
   useEffect(() => {
     const fetchPreferences = async () => {
       try {
         const res = await fetch(`${API_URL}/utilisateur/preferences/${userId}`);
         if (res.ok) {
           const data = await res.json();
-          setPreferences(data);
-          // Mettre à jour la langue dans localStorage et i18next
-          localStorage.setItem('emoia-lang', data.language);
+          setPreferences(prev => ({ ...prev, ...data }));
+          // Mettre à jour la langue
+          i18n.changeLanguage(data.language);
         }
       } catch (e) {
         console.error("Erreur chargement préférences", e);
@@ -83,7 +118,20 @@ function App() {
 
     fetchPreferences();
     setupWebSocket();
-    setMessages([{ sender: 'emoia', text: t('welcome') }]);
+    fetchPersonalityProfile();
+    
+    // Message de bienvenue intelligent
+    const welcomeMessage: Message = {
+      id: Date.now().toString(),
+      sender: 'emoia',
+      text: t('welcome'),
+      timestamp: new Date(),
+      emotion: {
+        dominant_emotion: 'joy',
+        confidence: 0.9
+      }
+    };
+    setMessages([welcomeMessage]);
   }, [userId, t]);
 
   const setupWebSocket = useCallback(() => {
@@ -91,41 +139,178 @@ function App() {
       wsRef.current.close();
     }
     const ws = new WebSocket(WS_URL);
-    ws.onopen = () => setWsConnected(true);
-    ws.onclose = () => setTimeout(setupWebSocket, 3000); // Retry connection
-    ws.onerror = () => setWsConnected(false);
-    ws.onmessage = (event) => {
-      setLoading(false);
-      const data = JSON.parse(event.data);
-      setMessages((msgs) => [...msgs, { sender: 'emoia', text: data.response, emotion: data.emotional_analysis }]);
+    
+    ws.onopen = () => {
+      setWsConnected(true);
+      ws.send(JSON.stringify({ type: 'identify', user_id: userId }));
     };
+    
+    ws.onclose = () => {
+      setWsConnected(false);
+      setTimeout(setupWebSocket, 3000);
+    };
+    
+    ws.onerror = () => setWsConnected(false);
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      
+      switch (data.type) {
+        case 'chat_response':
+          handleChatResponse(data);
+          break;
+        case 'emotional_update':
+          updateEmotionalState(data);
+          break;
+        case 'insight_update':
+          // Les insights sont gérés par le composant ConversationInsights
+          break;
+      }
+    };
+    
     wsRef.current = ws;
-  }, []);
+  }, [userId]);
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    const userMessage: Message = { sender: 'user', text: input };
-    setMessages((msgs) => [...msgs, userMessage]);
+  const handleChatResponse = (data: any) => {
+    setLoading(false);
+    const message: Message = {
+      id: Date.now().toString(),
+      sender: 'emoia',
+      text: data.response,
+      emotion: data.emotional_analysis,
+      timestamp: new Date(),
+      confidence: data.confidence
+    };
+    setMessages(msgs => [...msgs, message]);
+    
+    // Mettre à jour l'état émotionnel
+    if (data.emotional_analysis) {
+      updateEmotionalVisualization(data.emotional_analysis);
+    }
+  };
+
+  const updateEmotionalState = (data: any) => {
+    // Mise à jour des émotions actuelles pour la visualisation
+    if (data.current_emotions) {
+      setCurrentEmotions(data.current_emotions);
+    }
+    
+    // Mise à jour de l'historique d'humeur
+    if (data.mood_point) {
+      setMoodHistory(prev => [...prev, data.mood_point].slice(-50)); // Garder les 50 derniers
+    }
+  };
+
+  const updateEmotionalVisualization = (emotionalAnalysis: EmotionalAnalysis) => {
+    const emotions = Object.entries(emotionalAnalysis.emotion_scores || {})
+      .map(([emotion, value]) => ({
+        emotion,
+        value: value as number,
+        color: getEmotionColor(emotion),
+        icon: getEmotionIcon(emotion)
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8); // Top 8 émotions
+    
+    setCurrentEmotions(emotions);
+  };
+
+  const getEmotionColor = (emotion: string): string => {
+    const colors: { [key: string]: string } = {
+      joy: '#FFD93D',
+      sadness: '#6495ED',
+      anger: '#FF6B6B',
+      fear: '#9370DB',
+      surprise: '#FFB6C1',
+      love: '#FF69B4',
+      excitement: '#FFA500',
+      anxiety: '#DDA0DD',
+      contentment: '#98FB98',
+      curiosity: '#87CEEB',
+      disgust: '#8B4513'
+    };
+    return colors[emotion] || '#808080';
+  };
+
+  const getEmotionIcon = (emotion: string): string => {
+    const icons: { [key: string]: string } = {
+      joy: '😊',
+      sadness: '😢',
+      anger: '😠',
+      fear: '😨',
+      surprise: '😮',
+      love: '❤️',
+      excitement: '🎉',
+      anxiety: '😰',
+      contentment: '😌',
+      curiosity: '🤔',
+      disgust: '🤢'
+    };
+    return icons[emotion] || '🎭';
+  };
+
+  const sendMessage = async (text?: string) => {
+    const messageText = text || input;
+    if (!messageText.trim()) return;
+    
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      sender: 'user',
+      text: messageText,
+      timestamp: new Date()
+    };
+    setMessages(msgs => [...msgs, userMessage]);
     setInput('');
     setLoading(true);
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ user_id: userId, message: input }));
+      wsRef.current.send(JSON.stringify({
+        type: 'chat_message',
+        user_id: userId,
+        message: messageText,
+        context: {
+          language: preferences.language,
+          ai_settings: preferences.ai_settings
+        }
+      }));
     } else {
-      // Fallback to HTTP if WS is not open
+      // Fallback HTTP
       try {
         const res = await fetch(`${API_URL}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId, message: input }),
+          body: JSON.stringify({
+            user_id: userId,
+            message: messageText,
+            preferences: preferences.ai_settings
+          }),
         });
         const data = await res.json();
-        setMessages((msgs) => [...msgs, { sender: 'emoia', text: data.response, emotion: data.emotional_analysis }]);
+        handleChatResponse(data);
       } catch (e) {
-        setMessages((msgs) => [...msgs, { sender: 'emoia', text: `[${t('analyticsError')}]` }]);
+        const errorMessage: Message = {
+          id: Date.now().toString(),
+          sender: 'emoia',
+          text: t('errorMessage'),
+          timestamp: new Date()
+        };
+        setMessages(msgs => [...msgs, errorMessage]);
+        setLoading(false);
       }
-      setLoading(false);
     }
+  };
+
+  const handleVoiceTranscript = (transcript: string) => {
+    setInput(transcript);
+    // Option pour envoyer automatiquement
+    if (preferences.ai_settings?.response_length === 'concise') {
+      sendMessage(transcript);
+    }
+  };
+
+  const handleVoiceAudio = async (audioBlob: Blob) => {
+    // Ici on pourrait envoyer l'audio au backend pour analyse vocale
+    console.log('Audio reçu:', audioBlob);
   };
 
   const fetchAnalytics = async () => {
@@ -139,6 +324,18 @@ function App() {
     }
   };
 
+  const fetchPersonalityProfile = async () => {
+    try {
+      const res = await fetch(`${API_URL}/personality/${userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPersonalityProfile(data);
+      }
+    } catch (e) {
+      console.error('Erreur lors de la récupération du profil de personnalité:', e);
+    }
+  };
+
   const savePreferences = async () => {
     try {
       const res = await fetch(`${API_URL}/utilisateur/preferences`, {
@@ -146,16 +343,13 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId,
-          language: preferences.language,
-          theme: preferences.theme,
-          notification_settings: preferences.notification_settings
+          ...preferences
         })
       });
       
       if (res.ok) {
         setPrefsStatus(t('preferencesSaved'));
-        // Mettre à jour la langue dans localStorage et i18next
-        localStorage.setItem('emoia-lang', preferences.language);
+        i18n.changeLanguage(preferences.language);
         setTimeout(() => setPrefsStatus(null), 3000);
       } else {
         setPrefsStatus(t('preferencesError'));
@@ -165,51 +359,218 @@ function App() {
     }
   };
 
-  // Chart data preparation
-  let lineData, pieData;
-  if (analytics && analytics.trends) {
-    // ... (Chart data logic can be improved or kept as is)
-  }
+  const handleSuggestionSelect = (suggestion: any) => {
+    if (suggestion.type === 'response' || suggestion.type === 'question') {
+      setInput(suggestion.text);
+    } else if (suggestion.type === 'action') {
+      // Exécuter l'action suggérée
+      sendMessage(suggestion.text);
+    }
+  };
+
+  const handleEmotionClick = (emotion: string) => {
+    // Envoyer un message contextuel basé sur l'émotion
+    const emotionMessages: { [key: string]: string } = {
+      joy: t('emotionClickJoy'),
+      sadness: t('emotionClickSadness'),
+      anger: t('emotionClickAnger'),
+      fear: t('emotionClickFear'),
+      love: t('emotionClickLove')
+    };
+    
+    const message = emotionMessages[emotion] || t('emotionClickDefault', { emotion });
+    sendMessage(message);
+  };
 
   return (
     <div className="App">
       <header className="app-header">
-        <h1>{t('title')}</h1>
+        <div className="header-content">
+          <h1 className="app-title">
+            <span className="emoji-logo">🧠</span>
+            {t('title')}
+            <span className="version-badge">v3.0</span>
+          </h1>
+          <div className="header-status">
+            <div className={`connection-status ${wsConnected ? 'connected' : 'disconnected'}`}>
+              <span className="status-dot"></span>
+              {wsConnected ? t('connected') : t('reconnecting')}
+            </div>
+          </div>
+        </div>
         <div className="controls">
           <LanguageSwitcher />
-          <nav>
-            <button onClick={() => setTab('chat')} className={tab === 'chat' ? 'active' : ''}>{t('chatTab')}</button>
-            <button onClick={() => { setTab('dashboard'); fetchAnalytics(); }} className={tab === 'dashboard' ? 'active' : ''}>{t('dashboardTab')}</button>
-            <button onClick={() => setTab('preferences')} className={tab === 'preferences' ? 'active' : ''}>{t('preferencesTab')}</button>
+          <nav className="main-nav">
+            <button
+              onClick={() => setTab('chat')}
+              className={`nav-btn ${tab === 'chat' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">💬</span>
+              {t('chatTab')}
+            </button>
+            <button
+              onClick={() => { setTab('insights'); }}
+              className={`nav-btn ${tab === 'insights' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">🧠</span>
+              {t('insightsTab')}
+            </button>
+            <button
+              onClick={() => { setTab('dashboard'); fetchAnalytics(); }}
+              className={`nav-btn ${tab === 'dashboard' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">📊</span>
+              {t('dashboardTab')}
+            </button>
+            <button
+              onClick={() => setTab('preferences')}
+              className={`nav-btn ${tab === 'preferences' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">⚙️</span>
+              {t('preferencesTab')}
+            </button>
           </nav>
         </div>
       </header>
 
-      <main>
+      <main className="main-content">
         {tab === 'chat' && (
-          <div className="chat-container">
-            <div className="messages-area">
-              {messages.map((msg, i) => (
-                <div key={i} className={`message ${msg.sender}`}>
-                  <div className="bubble">{msg.text}</div>
+          <div className="chat-layout">
+            <div className="chat-main">
+              <div className="chat-container" ref={chatContainerRef}>
+                <div className="messages-area">
+                  {messages.map((msg) => (
+                    <div key={msg.id} className={`message ${msg.sender}`}>
+                      <div className="message-content">
+                        <div className="bubble">
+                          {msg.text}
+                          {msg.emotion && msg.sender === 'emoia' && (
+                            <div className="emotion-indicator">
+                              <span className="emotion-icon">
+                                {getEmotionIcon(msg.emotion.dominant_emotion)}
+                              </span>
+                              <span className="emotion-label">
+                                {t(msg.emotion.dominant_emotion)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="message-meta">
+                          <span className="timestamp">
+                            {msg.timestamp.toLocaleTimeString()}
+                          </span>
+                          {msg.confidence && (
+                            <span className="confidence">
+                              {Math.round(msg.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {loading && (
+                    <div className="message emoia">
+                      <div className="bubble typing">
+                        <div className="typing-dots">
+                          <span></span>
+                          <span></span>
+                          <span></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
                 </div>
-              ))}
-              {loading && (
-                <div className="message emoia">
-                  <div className="bubble"><i>{t('typing')}</i></div>
+                
+                {showSuggestions && messages.length > 0 && (
+                  <div className="suggestions-wrapper">
+                    <SmartSuggestions
+                      context={messages.slice(-5).map(m => m.text).join(' ')}
+                      userInput={input}
+                      emotionalState={messages[messages.length - 1]?.emotion}
+                      onSuggestionSelect={handleSuggestionSelect}
+                    />
+                  </div>
+                )}
+                
+                <div className="input-area">
+                  <div className="input-controls">
+                    <VoiceInput
+                      onTranscript={handleVoiceTranscript}
+                      onAudioData={handleVoiceAudio}
+                      language={preferences.language === 'fr' ? 'fr-FR' : preferences.language === 'es' ? 'es-ES' : 'en-US'}
+                    />
+                    <input
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                      placeholder={t('inputPlaceholder')}
+                      disabled={loading}
+                      className="message-input"
+                    />
+                    <button
+                      onClick={() => sendMessage()}
+                      disabled={loading || !input.trim()}
+                      className="send-button"
+                    >
+                      <span className="send-icon">➤</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <aside className="chat-sidebar">
+              {currentEmotions.length > 0 && (
+                <div className="emotion-panel">
+                  <h3>{t('currentEmotions')}</h3>
+                  <EmotionWheel
+                    emotions={currentEmotions}
+                    size={250}
+                    onEmotionClick={handleEmotionClick}
+                  />
                 </div>
               )}
-              <div ref={messagesEndRef} />
-            </div>
-            <div className="input-area">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder={t('inputPlaceholder')}
-                disabled={loading}
-              />
-              <button onClick={sendMessage} disabled={loading || !input.trim()}>{t('sendButton')}</button>
+              
+              {showInsights && (
+                <div className="insights-panel">
+                  <ConversationInsights
+                    userId={userId}
+                    onInsightAction={(insight) => console.log('Insight action:', insight)}
+                  />
+                </div>
+              )}
+            </aside>
+          </div>
+        )}
+
+        {tab === 'insights' && (
+          <div className="insights-container">
+            <div className="insights-grid">
+              {personalityProfile && (
+                <div className="insight-card personality">
+                  <h2>{t('personalityProfile')}</h2>
+                  <PersonalityRadar data={personalityProfile} />
+                </div>
+              )}
+              
+              {moodHistory.length > 0 && (
+                <div className="insight-card mood">
+                  <h2>{t('moodHistory')}</h2>
+                  <MoodHistory history={moodHistory} period="week" />
+                </div>
+              )}
+              
+              <div className="insight-card emotions">
+                <h2>{t('emotionalBalance')}</h2>
+                {currentEmotions.length > 0 && (
+                  <EmotionWheel
+                    emotions={currentEmotions}
+                    size={300}
+                    onEmotionClick={handleEmotionClick}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -221,48 +582,187 @@ function App() {
         {tab === 'preferences' && (
           <div className="preferences-container">
             <h2>{t('preferencesTab')}</h2>
-            <div className="preferences-form">
-              <div className="form-group">
-                <label>{t('languageLabel')}</label>
-                <select
-                  value={preferences.language}
-                  onChange={(e) => setPreferences({...preferences, language: e.target.value})}
-                >
-                  <option value="fr">Français</option>
-                  <option value="en">English</option>
-                  <option value="es">Español</option>
-                </select>
-              </div>
-              
-              <div className="form-group">
-                <label>{t('themeLabel')}</label>
-                <div className="theme-options">
-                  <button
-                    className={preferences.theme === 'light' ? 'active' : ''}
-                    onClick={() => setPreferences({...preferences, theme: 'light'})}
+            <div className="preferences-grid">
+              <div className="pref-section">
+                <h3>{t('generalSettings')}</h3>
+                <div className="form-group">
+                  <label>{t('languageLabel')}</label>
+                  <select
+                    value={preferences.language}
+                    onChange={(e) => setPreferences({...preferences, language: e.target.value})}
                   >
-                    {t('lightTheme')}
-                  </button>
-                  <button
-                    className={preferences.theme === 'dark' ? 'active' : ''}
-                    onClick={() => setPreferences({...preferences, theme: 'dark'})}
-                  >
-                    {t('darkTheme')}
-                  </button>
+                    <option value="fr">Français</option>
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                  </select>
+                </div>
+                
+                <div className="form-group">
+                  <label>{t('themeLabel')}</label>
+                  <div className="theme-options">
+                    <button
+                      className={`theme-btn ${preferences.theme === 'light' ? 'active' : ''}`}
+                      onClick={() => setPreferences({...preferences, theme: 'light'})}
+                    >
+                      ☀️ {t('lightTheme')}
+                    </button>
+                    <button
+                      className={`theme-btn ${preferences.theme === 'dark' ? 'active' : ''}`}
+                      onClick={() => setPreferences({...preferences, theme: 'dark'})}
+                    >
+                      🌙 {t('darkTheme')}
+                    </button>
+                  </div>
                 </div>
               </div>
               
-              <button onClick={savePreferences} className="save-btn">
-                {t('savePreferences')}
+              <div className="pref-section">
+                <h3>{t('aiSettings')}</h3>
+                <div className="form-group">
+                  <label>{t('personalityStyle')}</label>
+                  <select
+                    value={preferences.ai_settings?.personality_style || 'empathetic'}
+                    onChange={(e) => setPreferences({
+                      ...preferences,
+                      ai_settings: {
+                        ...preferences.ai_settings!,
+                        personality_style: e.target.value as any
+                      }
+                    })}
+                  >
+                    <option value="professional">{t('professional')}</option>
+                    <option value="friendly">{t('friendly')}</option>
+                    <option value="casual">{t('casual')}</option>
+                    <option value="empathetic">{t('empathetic')}</option>
+                  </select>
+                </div>
+                
+                <div className="form-group">
+                  <label>{t('responseLength')}</label>
+                  <select
+                    value={preferences.ai_settings?.response_length || 'balanced'}
+                    onChange={(e) => setPreferences({
+                      ...preferences,
+                      ai_settings: {
+                        ...preferences.ai_settings!,
+                        response_length: e.target.value as any
+                      }
+                    })}
+                  >
+                    <option value="concise">{t('concise')}</option>
+                    <option value="balanced">{t('balanced')}</option>
+                    <option value="detailed">{t('detailed')}</option>
+                  </select>
+                </div>
+                
+                <div className="form-group">
+                  <label>{t('emotionalIntelligence')}</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={(preferences.ai_settings?.emotional_intelligence_level || 0.8) * 100}
+                    onChange={(e) => setPreferences({
+                      ...preferences,
+                      ai_settings: {
+                        ...preferences.ai_settings!,
+                        emotional_intelligence_level: Number(e.target.value) / 100
+                      }
+                    })}
+                  />
+                  <span>{Math.round((preferences.ai_settings?.emotional_intelligence_level || 0.8) * 100)}%</span>
+                </div>
+              </div>
+              
+              <div className="pref-section">
+                <h3>{t('notifications')}</h3>
+                <div className="notification-settings">
+                  <label className="switch-label">
+                    <input
+                      type="checkbox"
+                      checked={preferences.notification_settings.email}
+                      onChange={(e) => setPreferences({
+                        ...preferences,
+                        notification_settings: {
+                          ...preferences.notification_settings,
+                          email: e.target.checked
+                        }
+                      })}
+                    />
+                    <span className="switch"></span>
+                    {t('emailNotifications')}
+                  </label>
+                  
+                  <label className="switch-label">
+                    <input
+                      type="checkbox"
+                      checked={preferences.notification_settings.push}
+                      onChange={(e) => setPreferences({
+                        ...preferences,
+                        notification_settings: {
+                          ...preferences.notification_settings,
+                          push: e.target.checked
+                        }
+                      })}
+                    />
+                    <span className="switch"></span>
+                    {t('pushNotifications')}
+                  </label>
+                  
+                  <label className="switch-label">
+                    <input
+                      type="checkbox"
+                      checked={preferences.notification_settings.sound}
+                      onChange={(e) => setPreferences({
+                        ...preferences,
+                        notification_settings: {
+                          ...preferences.notification_settings,
+                          sound: e.target.checked
+                        }
+                      })}
+                    />
+                    <span className="switch"></span>
+                    {t('soundNotifications')}
+                  </label>
+                </div>
+              </div>
+            </div>
+            
+            <div className="preferences-actions">
+              <button onClick={savePreferences} className="save-btn primary">
+                💾 {t('savePreferences')}
               </button>
               
-              {prefsStatus && <div className="status-message">{prefsStatus}</div>}
+              {prefsStatus && (
+                <div className={`status-message ${prefsStatus.includes('Error') ? 'error' : 'success'}`}>
+                  {prefsStatus}
+                </div>
+              )}
             </div>
           </div>
         )}
       </main>
-      <footer>
-        <small>EmoIA V3 &copy; 2024</small>
+      
+      <footer className="app-footer">
+        <div className="footer-content">
+          <div className="footer-info">
+            <small>EmoIA V3 &copy; 2024 - {t('aiWithHeart')}</small>
+          </div>
+          <div className="footer-actions">
+            <button
+              className="toggle-btn"
+              onClick={() => setShowInsights(!showInsights)}
+            >
+              {showInsights ? '🙈' : '👁️'} {t('toggleInsights')}
+            </button>
+            <button
+              className="toggle-btn"
+              onClick={() => setShowSuggestions(!showSuggestions)}
+            >
+              {showSuggestions ? '🚫' : '💡'} {t('toggleSuggestions')}
+            </button>
+          </div>
+        </div>
       </footer>
     </div>
   );
