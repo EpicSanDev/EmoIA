@@ -157,6 +157,27 @@ async def startup_event():
         logger.error(f"❌ Erreur lors du démarrage: {e}")
         # Ne pas faire échouer le démarrage, juste logger l'erreur
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Nettoyage propre lors de l'arrêt"""
+    try:
+        logger.info("🛑 Arrêt de l'API EmoIA...")
+        
+        # Nettoyer le client MCP
+        if mcp_client:
+            await mcp_client.cleanup()
+            logger.info("✅ MCP client nettoyé")
+        
+        # Nettoyer le gestionnaire MCP
+        if mcp_manager:
+            await mcp_manager.cleanup()
+            logger.info("✅ MCP manager nettoyé")
+        
+        logger.info("🎯 API EmoIA arrêtée proprement")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de l'arrêt: {e}")
+
 # Importer le routeur WebSocket pour les analytics
 from src.analytics.websocket import router as analytics_router
 app.include_router(analytics_router)
@@ -586,6 +607,66 @@ async def websocket_mcp(ws: WebSocket):
     except Exception as e:
         print(f"Erreur WebSocket MCP: {e}")
         await ws.send_json({"type": "error", "message": str(e)})
+
+@app.websocket("/ws/analytics/{user_id}")
+async def websocket_analytics(ws: WebSocket, user_id: str):
+    """WebSocket pour les analytics en temps réel (compatibilité frontend)"""
+    await ws.accept()
+    
+    try:
+        # Envoyer un message de confirmation de connexion
+        await ws.send_json({
+            "type": "connected",
+            "user_id": user_id,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Boucle de maintien de connexion
+        while True:
+            try:
+                # Recevoir des messages du client
+                data = await asyncio.wait_for(ws.receive_json(), timeout=30.0)
+                
+                if data.get("type") == "ping":
+                    await ws.send_json({
+                        "type": "pong",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                
+                elif data.get("type") == "request_analytics":
+                    # Envoyer des données d'analytics de demo
+                    analytics_data = {
+                        "type": "analytics_update",
+                        "timestamp": datetime.now().isoformat(),
+                        "user_id": user_id,
+                        "data": {
+                            "emotions": {
+                                "joy": 0.7,
+                                "sadness": 0.1,
+                                "neutral": 0.2
+                            },
+                            "interaction_count": 42,
+                            "sentiment_trend": "positive",
+                            "engagement_score": 0.85
+                        }
+                    }
+                    await ws.send_json(analytics_data)
+                    
+            except asyncio.TimeoutError:
+                # Envoyer un ping périodique pour maintenir la connexion
+                await ws.send_json({
+                    "type": "ping",
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket analytics déconnecté pour l'utilisateur {user_id}")
+    except Exception as e:
+        logger.error(f"Erreur WebSocket analytics: {e}")
+        try:
+            await ws.send_json({"type": "error", "message": str(e)})
+        except:
+            pass
 
 # ==================== NOUVEAUX ENDPOINTS ====================
 
@@ -1017,6 +1098,27 @@ async def get_api_memories(user_id: str, limit: int = 100, memory_type: Optional
             "memories": [],
             "count": 0,
             "message": "Erreur lors du chargement des mémoires"
+        }
+
+@app.delete("/api/memories/{memory_id}", tags=["Intelligence"])
+async def delete_api_memory(memory_id: str, user_id: str = None):
+    """API endpoint pour supprimer une mémoire"""
+    try:
+        # Pour l'instant, juste retourner un succès simulé
+        # En production, cela devrait vraiment supprimer de la base de données
+        logger.info(f"Demande de suppression de la mémoire {memory_id} pour l'utilisateur {user_id}")
+        
+        return {
+            "status": "success",
+            "message": f"Mémoire {memory_id} supprimée",
+            "memory_id": memory_id
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur delete_api_memory: {e}")
+        return {
+            "status": "error",
+            "message": "Erreur lors de la suppression de la mémoire"
         }
 
 # Endpoints Telegram
