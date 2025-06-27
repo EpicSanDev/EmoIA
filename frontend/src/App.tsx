@@ -4,14 +4,14 @@ import './App.css';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler
 } from 'chart.js';
-import LanguageSwitcher from './components/LanguageSwitcher';
-import AnalyticsDashboard from './components/AnalyticsDashboard';
-import EmotionWheel from './components/EmotionWheel';
-import PersonalityRadar from './components/PersonalityRadar';
-import MoodHistory from './components/MoodHistory';
-import VoiceInput from './components/VoiceInput';
-import ConversationInsights from './components/ConversationInsights';
-import SmartSuggestions from './components/SmartSuggestions';
+import LanguageSwitcher from './components/LanguageSwitcher.tsx';
+import AnalyticsDashboard from './components/AnalyticsDashboard.tsx';
+import EmotionWheel from './components/EmotionWheel.tsx';
+import PersonalityRadar from './components/PersonalityRadar.tsx';
+import MoodHistory from './components/MoodHistory.tsx';
+import VoiceInput from './components/VoiceInput.tsx';
+import ConversationInsights from './components/ConversationInsights.tsx';
+import SmartSuggestions from './components/SmartSuggestions.tsx';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler);
 

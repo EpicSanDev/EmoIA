@@ -1,10 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './App';
-import * as serviceWorkerRegistration from './serviceWorkerRegistration';
-import reportWebVitals from './reportWebVitals';
-import './i18n'; // Importer la configuration i18n
+import App from './App.tsx';
+import * as serviceWorkerRegistration from './serviceWorkerRegistration.ts';
+import reportWebVitals from './reportWebVitals.ts';
+import './i18n.ts'; // Importer la configuration i18n
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
