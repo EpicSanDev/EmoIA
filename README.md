@@ -1,5 +1,23 @@
 # EmoIA - Intelligence Artificielle Émotionnelle 🤖❤️
 
+## 🔧 Recent Fixes (2025-06-27)
+
+### Fixed Issues:
+1. **NVIDIA GPU Error**: Removed mandatory GPU requirements - now runs on systems without GPU
+2. **HuggingFace ImportError**: Updated `sentence-transformers` to v2.6.1 for compatibility
+
+### Quick Start:
+```bash
+# Auto-detects GPU and starts appropriately
+./start_docker.sh
+
+# Or manually:
+./start_docker_nogpu.sh  # Without GPU
+./start_docker_gpu.sh    # With NVIDIA GPU
+```
+
+See [DOCKER_FIX.md](./DOCKER_FIX.md) for detailed fix information.
+
 [![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/emoia/emoia)
 [![Python](https://img.shields.io/badge/python-3.11+-green.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
@@ -21,7 +39,7 @@ EmoIA est une intelligence artificielle avancée dotée de capacités émotionne
 
 ## 🆕 Nouvelles Fonctionnalités v3.0
 
-### � Model Context Protocol (MCP)
+### 🌟 Model Context Protocol (MCP)
 - Architecture flexible pour intégrer différents modèles IA
 - Changement de modèle en temps réel
 - Support du streaming pour les réponses
@@ -39,7 +57,7 @@ EmoIA est une intelligence artificielle avancée dotée de capacités émotionne
 - Design moderne avec thème clair/sombre
 - Composants React optimisés
 
-## �🚀 Démarrage Rapide
+## 🚀 Démarrage Rapide
 
 ### Prérequis
 

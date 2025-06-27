@@ -15,13 +15,6 @@ services:
       - OLLAMA_HOST=0.0.0.0
     networks:
       - emoia-network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
