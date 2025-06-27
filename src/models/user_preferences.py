@@ -3,7 +3,7 @@ Module de gestion des préférences utilisateur
 """
 
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from sqlalchemy import Column, String, JSON
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -21,6 +21,11 @@ class UserPreferencesDB(Base):
         "push": False,
         "sound": True
     })
+    ai_settings = Column(JSON, default={
+        "personality_adaptation": True,
+        "emotion_intensity": 0.8,
+        "response_style": "balanced"
+    })
 
 
 class UserPreferences:
@@ -31,6 +36,7 @@ class UserPreferences:
         language: Optional[str] = None
         theme: Optional[str] = None
         notification_settings: Optional[Dict[str, bool]] = None
+        ai_settings: Optional[Dict[str, Any]] = None
     
     class PreferencesResponse(BaseModel):
         """Schéma pour la réponse des préférences"""
@@ -38,6 +44,7 @@ class UserPreferences:
         language: str
         theme: str
         notification_settings: Dict[str, bool]
+        ai_settings: Dict[str, Any]
         
         class Config:
             from_attributes = True

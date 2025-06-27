@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # API Backend
+  emoia-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emoia-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./cache:/app/cache
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    networks:
+      - emoia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend React
+  emoia-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: emoia-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - emoia-api
+    networks:
+      - emoia-network
+
+  # Base de données PostgreSQL (optionnel, pour production)
+  postgres:
+    image: postgres:15-alpine
+    container_name: emoia-postgres
+    environment:
+      - POSTGRES_DB=emoia
+      - POSTGRES_USER=emoia
+      - POSTGRES_PASSWORD=emoia_secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - emoia-network
+    profiles:
+      - production
+
+  # Redis pour le cache (optionnel)
+  redis:
+    image: redis:7-alpine
+    container_name: emoia-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - emoia-network
+    profiles:
+      - production
+
+networks:
+  emoia-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
