@@ -36,6 +36,25 @@ interface Props {
 }
 
 const PersonalityRadar: React.FC<Props> = ({ data, title = "Profil de Personnalité" }) => {
+  if (!data) {
+    return (
+      <div style={{ height: '400px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p>Données de personnalité non disponibles</p>
+      </div>
+    );
+  }
+
+  const safeData = {
+    openness: data.openness ?? 0.5,
+    conscientiousness: data.conscientiousness ?? 0.5,
+    extraversion: data.extraversion ?? 0.5,
+    agreeableness: data.agreeableness ?? 0.5,
+    neuroticism: data.neuroticism ?? 0.5,
+    emotional_intelligence: data.emotional_intelligence ?? 0.5,
+    empathy_level: data.empathy_level ?? 0.5,
+    creativity: data.creativity ?? 0.5
+  };
+
   const chartData = {
     labels: [
       '🌟 Ouverture',
@@ -51,14 +70,14 @@ const PersonalityRadar: React.FC<Props> = ({ data, title = "Profil de Personnali
       {
         label: 'Votre Profil',
         data: [
-          data.openness * 100,
-          data.conscientiousness * 100,
-          data.extraversion * 100,
-          data.agreeableness * 100,
-          data.neuroticism * 100,
-          data.emotional_intelligence * 100,
-          data.empathy_level * 100,
-          data.creativity * 100
+          safeData.openness * 100,
+          safeData.conscientiousness * 100,
+          safeData.extraversion * 100,
+          safeData.agreeableness * 100,
+          safeData.neuroticism * 100,
+          safeData.emotional_intelligence * 100,
+          safeData.empathy_level * 100,
+          safeData.creativity * 100
         ],
         backgroundColor: 'rgba(99, 102, 241, 0.2)',
         borderColor: 'rgba(99, 102, 241, 1)',

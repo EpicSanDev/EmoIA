@@ -28,9 +28,13 @@ class OllamaProvider(MCPProvider):
         ]
         self.default_model = "llama2"
         self._session = None
+        self._initialized = False
         
-    async def _setup(self):
-        """Configure la connexion à Ollama"""
+    async def initialize(self):
+        """Initialise le provider et la session"""
+        if self._initialized:
+            return
+            
         self._session = aiohttp.ClientSession()
         
         # Vérifier la disponibilité d'Ollama
@@ -48,6 +52,18 @@ class OllamaProvider(MCPProvider):
         except Exception as e:
             logger.error(f"Impossible de se connecter à Ollama: {e}")
             
+        self._initialized = True
+        
+    async def _setup(self):
+        """Configuration spécifique du provider (requis par la classe parent)"""
+        # La configuration est maintenant gérée dans initialize()
+        pass
+        
+    async def _ensure_session(self):
+        """S'assure que la session est initialisée"""
+        if not self._session or self._session.closed:
+            await self.initialize()
+            
     async def send_completion(self,
                             model: str,
                             messages: List[Dict[str, str]],
@@ -55,6 +71,8 @@ class OllamaProvider(MCPProvider):
                             temperature: float = 0.7,
                             **kwargs) -> Dict[str, Any]:
         """Envoie une requête de complétion à Ollama"""
+        
+        await self._ensure_session()
         
         # Formater le prompt
         prompt = self._format_prompt(messages)
@@ -126,6 +144,8 @@ class OllamaProvider(MCPProvider):
                               **kwargs) -> AsyncGenerator[str, None]:
         """Stream une complétion depuis Ollama"""
         
+        await self._ensure_session()
+        
         # Préparer la requête
         if self._supports_chat_format(model):
             payload = {
@@ -175,6 +195,8 @@ class OllamaProvider(MCPProvider):
             
     async def list_models(self) -> List[str]:
         """Liste tous les modèles Ollama disponibles"""
+        await self._ensure_session()
+        
         try:
             async with self._session.get(f"{self.base_url}/api/tags") as resp:
                 if resp.status == 200:
@@ -189,6 +211,8 @@ class OllamaProvider(MCPProvider):
             
     async def pull_model(self, model_name: str) -> bool:
         """Télécharge un modèle depuis le registry Ollama"""
+        await self._ensure_session()
+        
         try:
             payload = {"name": model_name}
             async with self._session.post(f"{self.base_url}/api/pull", json=payload) as resp:
@@ -236,12 +260,16 @@ class OllamaProvider(MCPProvider):
         
     async def cleanup(self):
         """Nettoie les ressources"""
-        if self._session:
+        if self._session and not self._session.closed:
             await self._session.close()
+        self._session = None
+        self._initialized = False
         await super().cleanup()
         
     async def get_embeddings(self, text: str, model: str = "llama2") -> List[float]:
         """Obtient les embeddings d'un texte"""
+        await self._ensure_session()
+        
         try:
             payload = {
                 "model": model,
