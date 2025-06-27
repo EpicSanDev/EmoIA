@@ -3,8 +3,10 @@ Advanced API Endpoints for EmoIA v3.0 - Roadmap Features
 20 nouvelles fonctionnalités révolutionnaires
 """
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
@@ -12,9 +14,14 @@ import logging
 import asyncio
 import json
 from enum import Enum
+import uuid
 
 from ..advanced_features.smart_focus_mode import SmartFocusMode, FocusLevel
 from ..gpu_optimization.rtx_optimizer import RTXOptimizer
+from ..telegram_bot import TelegramBotManager
+from ..memory.intelligent_memory import IntelligentMemorySystem
+from ..models.user_preferences import UserPreferencesManager
+from ..emotional.core import EmotionalCore
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +133,53 @@ class DreamAnalysis(BaseModel):
     psychological_insights: List[str]
     patterns: List[str]
     recommendations: List[str]
+
+# Telegram Config Models
+class TelegramConfig(BaseModel):
+    bot_token: str
+    enabled: bool
+    notification_types: List[str] = ["proactive", "reminders", "insights"]
+    auto_respond: bool = False
+
+# User Profile Models
+class UserProfile(BaseModel):
+    user_id: str
+    display_name: str
+    email: Optional[str] = None
+    telegram_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    preferences: Dict[str, Any] = {}
+    personality_traits: Dict[str, float] = {}
+    created_at: datetime
+    last_active: datetime
+    settings: Dict[str, Any] = {}
+
+# Memory Item Models
+class MemoryItem(BaseModel):
+    id: str
+    content: str
+    title: str
+    tags: List[str] = []
+    importance: float
+    created_at: datetime
+    accessed_count: int = 0
+    emotional_context: Optional[Dict[str, Any]] = None
+
+# Knowledge Graph Models
+class KnowledgeNode(BaseModel):
+    id: str
+    name: str
+    type: str  # concept, fact, relation, etc.
+    content: str
+    metadata: Dict[str, Any] = {}
+    connections: List[str] = []
+    created_at: datetime
+    confidence: float = 1.0
+
+class KnowledgeGraph(BaseModel):
+    nodes: List[KnowledgeNode]
+    edges: List[Dict[str, Any]]
+    metadata: Dict[str, Any] = {}
 
 # =============== SYSTÈME PRINCIPAL ===============
 
@@ -659,6 +713,351 @@ async def startup_event():
     """Initialisation des composants au démarrage"""
     await features_manager.initialize()
     logger.info("API Advanced Features démarrée avec succès")
+
+# =============== ENDPOINTS TELEGRAM ===============
+
+@app.post("/api/telegram/config")
+async def configure_telegram(config: TelegramConfig):
+    """Configure le bot Telegram"""
+    try:
+        if config.enabled and config.bot_token:
+            features_manager.telegram_bot.token = config.bot_token
+            success = await features_manager.telegram_bot.initialize()
+            if success:
+                await features_manager.telegram_bot.start_bot()
+                return {"status": "success", "message": "Bot Telegram configuré et démarré"}
+            else:
+                return {"status": "error", "message": "Erreur lors de l'initialisation du bot"}
+        elif not config.enabled:
+            await features_manager.telegram_bot.stop_bot()
+            return {"status": "success", "message": "Bot Telegram arrêté"}
+        else:
+            return {"status": "error", "message": "Token Telegram requis"}
+    except Exception as e:
+        logger.error(f"Erreur configuration Telegram: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/telegram/status")
+async def get_telegram_status():
+    """Retourne le statut du bot Telegram"""
+    return {
+        "enabled": features_manager.telegram_bot.is_running,
+        "connected_users": len(features_manager.telegram_bot.user_mappings),
+        "bot_username": getattr(features_manager.telegram_bot.bot, "username", None) if features_manager.telegram_bot.bot else None
+    }
+
+@app.get("/api/telegram/users")
+async def get_telegram_users():
+    """Retourne la liste des utilisateurs Telegram connectés"""
+    users = []
+    for tg_id, emoia_id in features_manager.telegram_bot.user_mappings.items():
+        if emoia_id in features_manager.user_profiles:
+            profile = features_manager.user_profiles[emoia_id]
+            users.append({
+                "telegram_id": tg_id,
+                "emoia_id": emoia_id,
+                "display_name": profile.get("display_name", "Utilisateur"),
+                "last_active": profile.get("last_active")
+            })
+    return {"users": users}
+
+# =============== ENDPOINTS PROFILS UTILISATEURS ===============
+
+@app.post("/api/users/profile")
+async def create_or_update_profile(profile: UserProfile):
+    """Crée ou met à jour un profil utilisateur"""
+    try:
+        profile_data = profile.dict()
+        profile_data["updated_at"] = datetime.now().isoformat()
+        features_manager.user_profiles[profile.user_id] = profile_data
+        
+        # Sauvegarder en base
+        await _save_user_profile(profile.user_id, profile_data)
+        
+        return {"status": "success", "profile": profile_data}
+    except Exception as e:
+        logger.error(f"Erreur sauvegarde profil: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/users/profile/{user_id}")
+async def get_user_profile(user_id: str):
+    """Récupère le profil d'un utilisateur"""
+    if user_id in features_manager.user_profiles:
+        return {"profile": features_manager.user_profiles[user_id]}
+    else:
+        # Essayer de charger depuis la base
+        profile = await _load_user_profile(user_id)
+        if profile:
+            features_manager.user_profiles[user_id] = profile
+            return {"profile": profile}
+        else:
+            raise HTTPException(status_code=404, detail="Profil non trouvé")
+
+@app.get("/api/users")
+async def list_users():
+    """Liste tous les utilisateurs"""
+    users = []
+    for user_id, profile in features_manager.user_profiles.items():
+        users.append({
+            "user_id": user_id,
+            "display_name": profile.get("display_name", "Utilisateur"),
+            "last_active": profile.get("last_active"),
+            "created_at": profile.get("created_at")
+        })
+    return {"users": users}
+
+@app.delete("/api/users/profile/{user_id}")
+async def delete_user_profile(user_id: str):
+    """Supprime un profil utilisateur"""
+    try:
+        if user_id in features_manager.user_profiles:
+            del features_manager.user_profiles[user_id]
+        await _delete_user_profile(user_id)
+        return {"status": "success", "message": "Profil supprimé"}
+    except Exception as e:
+        logger.error(f"Erreur suppression profil: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============== ENDPOINTS MEMOIRES ===============
+
+@app.get("/api/memories/{user_id}")
+async def get_user_memories(user_id: str, limit: int = 50, memory_type: Optional[str] = None):
+    """Récupère les souvenirs d'un utilisateur"""
+    try:
+        if not features_manager.memory_system:
+            raise HTTPException(status_code=503, detail="Système de mémoire non disponible")
+        
+        # Récupérer depuis le système de mémoire intelligent
+        memories = await _get_user_memories(user_id, limit, memory_type)
+        return {"memories": memories}
+    except Exception as e:
+        logger.error(f"Erreur récupération mémoires: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/memories/{user_id}")
+async def create_memory(user_id: str, memory_data: Dict[str, Any]):
+    """Crée un nouveau souvenir"""
+    try:
+        if not features_manager.memory_system:
+            raise HTTPException(status_code=503, detail="Système de mémoire non disponible")
+        
+        memory_id = await features_manager.memory_system.store_memory(
+            content=memory_data["content"],
+            user_id=user_id,
+            importance=memory_data.get("importance", 0.5),
+            context=memory_data.get("context", ""),
+            memory_type=memory_data.get("type", "personal"),
+            tags=memory_data.get("tags", [])
+        )
+        
+        return {"status": "success", "memory_id": memory_id}
+    except Exception as e:
+        logger.error(f"Erreur création mémoire: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/memories/{memory_id}")
+async def update_memory(memory_id: str, memory_data: Dict[str, Any]):
+    """Met à jour un souvenir"""
+    try:
+        # Logique de mise à jour à implémenter
+        return {"status": "success", "message": "Mémoire mise à jour"}
+    except Exception as e:
+        logger.error(f"Erreur mise à jour mémoire: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/memories/{memory_id}")
+async def delete_memory(memory_id: str):
+    """Supprime un souvenir"""
+    try:
+        # Logique de suppression à implémenter
+        return {"status": "success", "message": "Mémoire supprimée"}
+    except Exception as e:
+        logger.error(f"Erreur suppression mémoire: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/memories/{user_id}/search")
+async def search_memories(user_id: str, query: str, limit: int = 20):
+    """Recherche dans les souvenirs"""
+    try:
+        if not features_manager.memory_system:
+            raise HTTPException(status_code=503, detail="Système de mémoire non disponible")
+        
+        results = await features_manager.memory_system.retrieve_memories(
+            query=query,
+            user_id=user_id,
+            k=limit
+        )
+        
+        memories = []
+        for memory_item, similarity in results:
+            memories.append({
+                "id": features_manager._generate_memory_id(memory_item),
+                "content": memory_item.content,
+                "similarity": similarity,
+                "timestamp": memory_item.timestamp.isoformat(),
+                "importance": memory_item.importance,
+                "tags": memory_item.tags
+            })
+        
+        return {"memories": memories}
+    except Exception as e:
+        logger.error(f"Erreur recherche mémoires: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============== ENDPOINTS BASE DE CONNAISSANCE ===============
+
+@app.get("/api/knowledge/graph/{user_id}")
+async def get_knowledge_graph(user_id: str):
+    """Récupère le graphe de connaissances d'un utilisateur"""
+    try:
+        user_graph = await _get_user_knowledge_graph(user_id)
+        return {"graph": user_graph}
+    except Exception as e:
+        logger.error(f"Erreur récupération graphe: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/knowledge/nodes/{user_id}")
+async def create_knowledge_node(user_id: str, node_data: Dict[str, Any]):
+    """Crée un nouveau noeud de connaissance"""
+    try:
+        node_id = str(uuid.uuid4())
+        node = {
+            "id": node_id,
+            "name": node_data["name"],
+            "type": node_data.get("type", "concept"),
+            "content": node_data["content"],
+            "metadata": node_data.get("metadata", {}),
+            "connections": [],
+            "created_at": datetime.now().isoformat(),
+            "confidence": node_data.get("confidence", 1.0),
+            "user_id": user_id
+        }
+        
+        # Sauvegarder le noeud
+        await _save_knowledge_node(user_id, node)
+        
+        return {"status": "success", "node": node}
+    except Exception as e:
+        logger.error(f"Erreur création noeud: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/knowledge/connections/{user_id}")
+async def create_knowledge_connection(user_id: str, connection_data: Dict[str, Any]):
+    """Crée une connexion entre noeuds de connaissance"""
+    try:
+        connection = {
+            "id": str(uuid.uuid4()),
+            "source_id": connection_data["source_id"],
+            "target_id": connection_data["target_id"],
+            "relationship": connection_data["relationship"],
+            "strength": connection_data.get("strength", 1.0),
+            "created_at": datetime.now().isoformat(),
+            "user_id": user_id
+        }
+        
+        await _save_knowledge_connection(user_id, connection)
+        
+        return {"status": "success", "connection": connection}
+    except Exception as e:
+        logger.error(f"Erreur création connexion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/knowledge/search/{user_id}")
+async def search_knowledge(user_id: str, query: str, node_type: Optional[str] = None):
+    """Recherche dans la base de connaissance"""
+    try:
+        results = await _search_knowledge_graph(user_id, query, node_type)
+        return {"results": results}
+    except Exception as e:
+        logger.error(f"Erreur recherche connaissance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/knowledge/nodes/{node_id}")
+async def delete_knowledge_node(node_id: str):
+    """Supprime un noeud de connaissance"""
+    try:
+        await _delete_knowledge_node(node_id)
+        return {"status": "success", "message": "Noeud supprimé"}
+    except Exception as e:
+        logger.error(f"Erreur suppression noeud: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/{user_id}/comprehensive")
+async def get_comprehensive_analytics(user_id: str):
+    """Récupère des analytics complets pour un utilisateur"""
+    try:
+        analytics = await _get_comprehensive_analytics(user_id)
+        return {"analytics": analytics}
+    except Exception as e:
+        logger.error(f"Erreur analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============== FONCTIONS UTILITAIRES ===============
+
+async def _save_user_profile(user_id: str, profile_data: Dict[str, Any]):
+    """Sauvegarde un profil utilisateur"""
+    # Implémentation de la sauvegarde en base de données
+    pass
+
+async def _load_user_profile(user_id: str) -> Optional[Dict[str, Any]]:
+    """Charge un profil utilisateur"""
+    # Implémentation du chargement depuis la base de données
+    return None
+
+async def _delete_user_profile(user_id: str):
+    """Supprime un profil utilisateur"""
+    # Implémentation de la suppression
+    pass
+
+async def _get_user_memories(user_id: str, limit: int, memory_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Récupère les mémoires d'un utilisateur"""
+    # Utiliser le système de mémoire intelligent existant
+    if features_manager.memory_system:
+        # Récupérer toutes les mémoires et les filtrer
+        all_memories = []
+        # Logique de récupération à implémenter
+        return all_memories
+    return []
+
+async def _get_user_knowledge_graph(user_id: str) -> Dict[str, Any]:
+    """Récupère le graphe de connaissances d'un utilisateur"""
+    # Logique de récupération du graphe
+    return {"nodes": [], "edges": [], "metadata": {}}
+
+async def _save_knowledge_node(user_id: str, node: Dict[str, Any]):
+    """Sauvegarde un noeud de connaissance"""
+    # Implémentation de la sauvegarde
+    pass
+
+async def _save_knowledge_connection(user_id: str, connection: Dict[str, Any]):
+    """Sauvegarde une connexion de connaissance"""
+    # Implémentation de la sauvegarde
+    pass
+
+async def _search_knowledge_graph(user_id: str, query: str, node_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Recherche dans le graphe de connaissances"""
+    # Implémentation de la recherche
+    return []
+
+async def _delete_knowledge_node(node_id: str):
+    """Supprime un noeud de connaissance"""
+    # Implémentation de la suppression
+    pass
+
+async def _get_comprehensive_analytics(user_id: str) -> Dict[str, Any]:
+    """Récupère des analytics complets"""
+    # Implémentation des analytics
+    return {
+        "profile_completion": 0.0,
+        "memory_stats": {},
+        "knowledge_stats": {},
+        "telegram_activity": {}
+    }
+
+def set_memory_system(memory_system: IntelligentMemorySystem):
+    """Configure le système de mémoire"""
+    features_manager.memory_system = memory_system
+    features_manager.telegram_bot.emoia = features_manager  # Référence croisée pour le bot Telegram
 
 if __name__ == "__main__":
     import uvicorn

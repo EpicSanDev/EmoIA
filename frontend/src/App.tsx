@@ -15,6 +15,9 @@ import SmartSuggestions from './components/SmartSuggestions.tsx';
 import ModelSelector from './components/ModelSelector.tsx';
 import TaskManager from './components/TaskManager.tsx';
 import SmartCalendar from './components/SmartCalendar.tsx';
+import TelegramConfig from './components/TelegramConfig.tsx';
+import UserProfileManager from './components/UserProfileManager.tsx';
+import MemoryManager from './components/MemoryManager.tsx';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler);
 
@@ -58,7 +61,7 @@ const WS_URL = 'ws://localhost:8000/ws/chat';
 
 function App() {
   const { t, i18n } = useTranslation();
-  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences' | 'insights' | 'tasks' | 'calendar'>('chat');
+  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences' | 'insights' | 'tasks' | 'calendar' | 'profiles' | 'memories' | 'telegram'>('chat');
   const [userId, setUserId] = useState<string>('demo-user');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -460,6 +463,27 @@ function App() {
               {t('calendarTab')}
             </button>
             <button
+              onClick={() => setTab('profiles')}
+              className={`nav-btn ${tab === 'profiles' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">👥</span>
+              Profils
+            </button>
+            <button
+              onClick={() => setTab('memories')}
+              className={`nav-btn ${tab === 'memories' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">🧠</span>
+              Souvenirs
+            </button>
+            <button
+              onClick={() => setTab('telegram')}
+              className={`nav-btn ${tab === 'telegram' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">📱</span>
+              Telegram
+            </button>
+            <button
               onClick={() => setTab('preferences')}
               className={`nav-btn ${tab === 'preferences' ? 'active' : ''}`}
             >
@@ -814,6 +838,18 @@ function App() {
             }}
             tasks={[]} // You can pass tasks from state if needed
           />
+        )}
+
+        {tab === 'profiles' && (
+          <UserProfileManager />
+        )}
+
+        {tab === 'memories' && (
+          <MemoryManager userId={userId} />
+        )}
+
+        {tab === 'telegram' && (
+          <TelegramConfig />
         )}
       </main>
       
