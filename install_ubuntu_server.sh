@@ -135,32 +135,90 @@ install_nvidia_cuda() {
     # Vérifier la présence d'une carte NVIDIA
     if ! lspci | grep -i nvidia > /dev/null 2>&1; then
         log_warn "Aucune carte NVIDIA détectée. Installation CUDA ignorée."
+        touch /tmp/emoia_cpu_only
         return 0
     fi
     
     log_info "Carte NVIDIA détectée. Installation des drivers..."
     
-    # Ajouter le repository NVIDIA
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
-    dpkg -i cuda-keyring_1.0-1_all.deb
+    # Installer les prérequis pour NVIDIA
+    log_info "Installation des prérequis NVIDIA..."
+    apt install -y \
+        linux-headers-$(uname -r) \
+        build-essential \
+        dkms \
+        software-properties-common || {
+        log_error "Échec de l'installation des prérequis"
+        return 1
+    }
+    
+    # Désactiver nouveau (driver open source)
+    log_info "Configuration des modules kernel..."
+    cat > /etc/modprobe.d/blacklist-nouveau.conf << EOF
+blacklist nouveau
+options nouveau modeset=0
+EOF
+    update-initramfs -u
+    
+    # Ajouter le repository NVIDIA avec gestion d'erreur
+    log_info "Ajout du repository NVIDIA..."
+    cd /tmp
+    if [[ -f cuda-keyring_1.0-1_all.deb ]]; then
+        rm -f cuda-keyring_1.0-1_all.deb
+    fi
+    
+    if ! wget -O cuda-keyring_1.0-1_all.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb; then
+        log_error "Échec du téléchargement du keyring NVIDIA"
+        log_warn "Basculement en mode CPU uniquement..."
+        touch /tmp/emoia_cpu_only
+        return 1
+    fi
+    
+    if ! dpkg -i cuda-keyring_1.0-1_all.deb; then
+        log_warn "Problème avec l'installation du keyring, tentative de correction..."
+        apt --fix-broken install -y
+        if ! dpkg -i cuda-keyring_1.0-1_all.deb; then
+            log_error "Échec définitif du keyring NVIDIA"
+            touch /tmp/emoia_cpu_only
+            return 1
+        fi
+    fi
+    
     apt update
     
-    # Installer les drivers NVIDIA
-    apt install -y nvidia-driver-535
+    # Installation des drivers NVIDIA avec gestion d'erreur
+    log_info "Installation des drivers NVIDIA avec gestion d'erreur..."
     
-    # Installer CUDA toolkit
+    # Essayer plusieurs versions de drivers
+    if ! apt install -y nvidia-driver-535; then
+        log_warn "Échec du driver 535, essai avec 525..."
+        if ! apt install -y nvidia-driver-525; then
+            log_warn "Échec du driver 525, essai avec ubuntu-drivers..."
+            apt install -y ubuntu-drivers-common
+            if ! ubuntu-drivers autoinstall; then
+                log_error "Échec de toutes les méthodes d'installation NVIDIA"
+                log_warn "Basculement en mode CPU uniquement..."
+                touch /tmp/emoia_cpu_only
+                return 1
+            fi
+        fi
+    fi
+    
+    # Installation de CUDA si les drivers sont installés
     log_info "Installation de CUDA Toolkit 11.8..."
-    apt install -y cuda-toolkit-11-8
-    
-    # Ajouter CUDA au PATH
-    echo 'export PATH=/usr/local/cuda-11.8/bin:$PATH' >> /etc/environment
-    echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH' >> /etc/environment
-    
-    # Installer cuDNN
-    log_info "Installation de cuDNN..."
-    apt install -y libcudnn8 libcudnn8-dev
-    
-    log_info "NVIDIA CUDA installé. Redémarrage requis pour activer les drivers."
+    if apt install -y cuda-toolkit-11-8; then
+        # Ajouter CUDA au PATH
+        echo 'export PATH=/usr/local/cuda-11.8/bin:$PATH' >> /etc/environment
+        echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH' >> /etc/environment
+        
+        # Installer cuDNN
+        log_info "Installation de cuDNN..."
+        apt install -y libcudnn8 libcudnn8-dev || log_warn "Échec de l'installation cuDNN (non critique)"
+        
+        log_info "NVIDIA CUDA installé. Redémarrage requis pour activer les drivers."
+    else
+        log_warn "Échec de l'installation CUDA Toolkit (non critique)"
+    fi
 }
 
 # ==============================================================================
@@ -334,11 +392,21 @@ install_emoia_application() {
     
     # Activer l'environnement virtuel et installer les dépendances
     log_info "Installation des dépendances Python..."
+    
+    # Déterminer la version de PyTorch à installer
+    if [[ -f /tmp/emoia_cpu_only ]]; then
+        log_info "Mode CPU détecté, installation de PyTorch CPU..."
+        TORCH_INSTALL="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+    else
+        log_info "Mode GPU détecté, installation de PyTorch CUDA..."
+        TORCH_INSTALL="pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+    fi
+    
     sudo -u "$SERVICE_USER" bash -c "
         cd '$INSTALL_DIR'
         source venv/bin/activate
         pip install --upgrade pip setuptools wheel
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+        $TORCH_INSTALL
         pip install -r requirements.txt
     "
     
@@ -702,7 +770,13 @@ show_installation_info() {
     echo -e "  Redémarrer EmoIA: systemctl restart emoia-backend emoia-frontend emoia-telegram"
     
     echo -e "\n${YELLOW}Notes importantes :${NC}"
-    echo -e "  - Si vous avez une carte NVIDIA, redémarrez le serveur pour activer les drivers"
+    if [[ -f /tmp/emoia_cpu_only ]]; then
+        echo -e "  - EmoIA fonctionnera en mode CPU uniquement (GPU NVIDIA non disponible)"
+        echo -e "  - Les performances seront réduites mais le système est fonctionnel"
+    else
+        echo -e "  - Si vous avez une carte NVIDIA, redémarrez le serveur pour activer les drivers"
+        echo -e "  - Testez les drivers NVIDIA avec: nvidia-smi (après redémarrage)"
+    fi
     echo -e "  - Configurez votre token Telegram bot dans config.yaml"
     echo -e "  - Les mots de passe ont été sauvegardés dans $INSTALL_DIR/.env"
     echo -e "  - Consultez les logs en cas de problème"
