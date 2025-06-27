@@ -1,0 +1,220 @@
+version: '3.8'
+
+services:
+  # Service Ollama pour les modèles locaux
+  ollama:
+    image: ollama/ollama:latest
+    container_name: emoia-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # Stockage persistant sur NAS
+      - ${NAS_PATH}/emoia/ollama_data:/root/.ollama
+      - ${NAS_PATH}/emoia/models/ollama:/models
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - emoia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    # Pull des modèles au démarrage
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        sleep 5
+        ollama pull llama2:7b-chat
+        ollama pull mistral:latest
+        ollama pull phi:latest
+        wait
+
+  # API Backend
+  emoia-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emoia-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Stockage persistant sur NAS - Toutes les données
+      - ${NAS_PATH}/emoia/data:/app/data
+      - ${NAS_PATH}/emoia/logs:/app/logs
+      - ${NAS_PATH}/emoia/models:/app/models
+      - ${NAS_PATH}/emoia/cache:/app/cache
+      - ${NAS_PATH}/emoia/databases:/app/databases
+      - ${NAS_PATH}/emoia/backups:/app/backups
+      
+      # Configuration (peut rester local ou être sur le NAS)
+      - ./config.yaml:/app/config.yaml
+      - ./src:/app/src  # Pour le développement hot-reload
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MCP_DEFAULT_PROVIDER=ollama
+      # Configuration des chemins vers le NAS
+      - EMOIA_DATA_DIR=/app/data
+      - EMOIA_MODELS_DIR=/app/models
+      - EMOIA_LOGS_DIR=/app/logs
+      - EMOIA_CACHE_DIR=/app/cache
+      - EMOIA_MEMORY__DATABASE_URL=sqlite:////app/databases/emoia_memory.db
+      - EMOIA_DATABASES_DIR=/app/databases
+    networks:
+      - emoia-network
+    depends_on:
+      - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Frontend React
+  emoia-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: emoia-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000
+    depends_on:
+      - emoia-api
+    networks:
+      - emoia-network
+    volumes:
+      - ./frontend/src:/app/src  # Pour le développement hot-reload
+      - ./frontend/public:/app/public
+    restart: unless-stopped
+
+  # Base de données PostgreSQL (optionnel, pour production)
+  postgres:
+    image: postgres:15-alpine
+    container_name: emoia-postgres
+    environment:
+      - POSTGRES_DB=emoia
+      - POSTGRES_USER=emoia
+      - POSTGRES_PASSWORD=emoia_secure_password
+    volumes:
+      # Stockage persistant sur NAS
+      - ${NAS_PATH}/emoia/postgres_data:/var/lib/postgresql/data
+      - ${NAS_PATH}/emoia/postgres_backups:/backups
+    ports:
+      - "5432:5432"
+    networks:
+      - emoia-network
+    profiles:
+      - production
+    restart: unless-stopped
+
+  # Redis pour le cache (optionnel)
+  redis:
+    image: redis:7-alpine
+    container_name: emoia-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      # Stockage persistant sur NAS
+      - ${NAS_PATH}/emoia/redis_data:/data
+      - ${NAS_PATH}/emoia/redis_conf:/usr/local/etc/redis
+    networks:
+      - emoia-network
+    profiles:
+      - production
+    restart: unless-stopped
+    command: redis-server --appendonly yes --save 60 1000
+
+  # Monitoring avec Prometheus (optionnel)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: emoia-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      # Stockage persistant sur NAS
+      - ${NAS_PATH}/emoia/prometheus_data:/prometheus
+    networks:
+      - emoia-network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # Grafana pour la visualisation (optionnel)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: emoia-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      # Stockage persistant sur NAS
+      - ${NAS_PATH}/emoia/grafana_data:/var/lib/grafana
+      - ${NAS_PATH}/emoia/grafana_config:/etc/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - emoia-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # Service de sauvegarde automatique
+  backup-service:
+    image: alpine:latest
+    container_name: emoia-backup
+    volumes:
+      - ${NAS_PATH}/emoia:/nas_data
+      - ${NAS_PATH}/emoia/backups:/backups
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *  # Tous les jours à 2h du matin
+    command: |
+      sh -c '
+        apk add --no-cache tar gzip sqlite
+        while true; do
+          echo "Démarrage de la sauvegarde: $$(date)"
+          
+          # Sauvegarde des bases de données
+          if [ -f /nas_data/databases/emoia_memory.db ]; then
+            sqlite3 /nas_data/databases/emoia_memory.db ".backup /backups/emoia_memory_$$(date +%Y%m%d_%H%M%S).db"
+          fi
+          
+          # Sauvegarde complète des données
+          tar -czf /backups/emoia_full_backup_$$(date +%Y%m%d_%H%M%S).tar.gz \
+            -C /nas_data \
+            --exclude="backups" \
+            --exclude="*.tmp" \
+            --exclude="*.log" \
+            .
+          
+          # Nettoyage des anciennes sauvegardes (garde 30 jours)
+          find /backups -name "*.tar.gz" -mtime +30 -delete
+          find /backups -name "*.db" -mtime +30 -delete
+          
+          echo "Sauvegarde terminée: $$(date)"
+          
+          # Attendre 24 heures
+          sleep 86400
+        done
+      '
+    profiles:
+      - backup
+    restart: unless-stopped
+
+networks:
+  emoia-network:
+    driver: bridge
+
+# Les volumes ne sont plus définis ici car nous utilisons des bind mounts vers le NAS
