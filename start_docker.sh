@@ -1,52 +1,32 @@
 #!/bin/bash
 
-# Script de démarrage d'EmoIA avec Docker
+# EmoIA Docker Startup Script with Auto GPU Detection
 
-echo "🚀 Démarrage d'EmoIA..."
+echo "🚀 Starting EmoIA..."
 
-# Vérifier si Docker est installé
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker n'est pas installé. Veuillez installer Docker Desktop."
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo "❌ Docker is not running. Please start Docker first."
     exit 1
 fi
 
-# Vérifier si docker-compose est installé
+# Check if docker-compose is installed
 if ! command -v docker-compose &> /dev/null; then
-    echo "❌ docker-compose n'est pas installé. Veuillez installer docker-compose."
+    echo "❌ docker-compose is not installed. Please install docker-compose."
     exit 1
 fi
 
-# Créer les répertoires nécessaires
-echo "📁 Création des répertoires..."
-mkdir -p data logs models cache
+# Create necessary directories
+echo "📁 Creating necessary directories..."
+mkdir -p data logs models cache models/ollama
 
-# Arrêter les conteneurs existants
-echo "🛑 Arrêt des conteneurs existants..."
-docker-compose down
-
-# Mode de démarrage
-if [ "$1" = "production" ]; then
-    echo "🏭 Démarrage en mode PRODUCTION avec PostgreSQL et Redis..."
-    docker-compose --profile production up --build -d
+# Auto-detect GPU support
+echo "🔍 Detecting GPU support..."
+if docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi > /dev/null 2>&1; then
+    echo "✅ GPU detected! Starting with GPU support..."
+    exec ./start_docker_gpu.sh "$@"
 else
-    echo "🔧 Démarrage en mode DÉVELOPPEMENT..."
-    docker-compose up --build -d
+    echo "ℹ️  No GPU detected or NVIDIA Docker runtime not installed."
+    echo "Starting without GPU support..."
+    exec ./start_docker_nogpu.sh "$@"
 fi
-
-# Attendre que les services soient prêts
-echo "⏳ Attente du démarrage des services..."
-sleep 10
-
-# Vérifier l'état des services
-echo "✅ Vérification des services..."
-docker-compose ps
-
-# Afficher les URLs
-echo ""
-echo "🎉 EmoIA est démarré!"
-echo "📡 API Backend: http://localhost:8000"
-echo "🌐 Frontend: http://localhost:3000"
-echo "📊 Documentation API: http://localhost:8000/docs"
-echo ""
-echo "Pour voir les logs: docker-compose logs -f"
-echo "Pour arrêter: docker-compose down"

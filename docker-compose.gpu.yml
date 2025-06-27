@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  # GPU override for Ollama service
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
