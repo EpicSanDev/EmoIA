@@ -12,6 +12,7 @@ import MoodHistory from './components/MoodHistory.tsx';
 import VoiceInput from './components/VoiceInput.tsx';
 import ConversationInsights from './components/ConversationInsights.tsx';
 import SmartSuggestions from './components/SmartSuggestions.tsx';
+import ModelSelector from './components/ModelSelector.tsx';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler);
 
@@ -68,6 +69,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [showInsights, setShowInsights] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [currentProvider, setCurrentProvider] = useState<string>('ollama');
+  const [currentModel, setCurrentModel] = useState<string>('');
   
   const [preferences, setPreferences] = useState<Preferences>({
     language: 'fr',
@@ -382,6 +385,24 @@ function App() {
     sendMessage(message);
   };
 
+  const handleModelChange = (provider: string, model: string) => {
+    setCurrentProvider(provider);
+    setCurrentModel(model);
+    
+    // Afficher un message de confirmation
+    const confirmMessage: Message = {
+      id: Date.now().toString(),
+      sender: 'emoia',
+      text: t('modelChanged', { provider, model }),
+      timestamp: new Date(),
+      emotion: {
+        dominant_emotion: 'neutral',
+        confidence: 1.0
+      }
+    };
+    setMessages(msgs => [...msgs, confirmMessage]);
+  };
+
   return (
     <div className="App">
       <header className="app-header">
@@ -521,23 +542,38 @@ function App() {
             </div>
             
             <aside className="chat-sidebar">
+              <ModelSelector 
+                userId={userId}
+                onModelChange={handleModelChange}
+              />
+              
               {currentEmotions.length > 0 && (
-                <div className="emotion-panel">
-                  <h3>{t('currentEmotions')}</h3>
-                  <EmotionWheel
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">{t('currentEmotions')}</h3>
+                  </div>
+                  <EmotionWheel 
                     emotions={currentEmotions}
-                    size={250}
                     onEmotionClick={handleEmotionClick}
                   />
                 </div>
               )}
               
-              {showInsights && (
-                <div className="insights-panel">
-                  <ConversationInsights
-                    userId={userId}
-                    onInsightAction={(insight) => console.log('Insight action:', insight)}
-                  />
+              {personalityProfile && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">{t('personalityProfile')}</h3>
+                  </div>
+                  <PersonalityRadar profile={personalityProfile} />
+                </div>
+              )}
+              
+              {moodHistory.length > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">{t('moodHistory')}</h3>
+                  </div>
+                  <MoodHistory data={moodHistory} />
                 </div>
               )}
             </aside>

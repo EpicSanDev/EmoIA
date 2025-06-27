@@ -146,7 +146,22 @@ const resources = {
       
       // Errors
       errorMessage: "Sorry, an error occurred. Please try again.",
-      analyticsError: "Error loading analytics"
+      analyticsError: "Error loading analytics",
+      
+      // Model Selector (MCP)
+      modelSelection: "AI Model Selection",
+      loadingModels: "Loading models...",
+      noModelsAvailable: "No models available",
+      providerDetails: "Provider Details",
+      capabilities: "Capabilities",
+      defaultModel: "Default Model",
+      modelChanged: "Model changed to {{model}} ({{provider}})",
+      modelProvider: "Model Provider",
+      selectModel: "Select a Model",
+      mcpSettings: "MCP Settings",
+      streamingEnabled: "Streaming Enabled",
+      contextLength: "Context Length",
+      temperature: "Temperature"
     }
   },
   fr: {
@@ -291,7 +306,22 @@ const resources = {
       
       // Errors
       errorMessage: "Désolé, une erreur s'est produite. Veuillez réessayer.",
-      analyticsError: "Erreur lors du chargement des analytiques"
+      analyticsError: "Erreur lors du chargement des analytiques",
+      
+      // Model Selector (MCP)
+      modelSelection: "Sélection du modèle IA",
+      loadingModels: "Chargement des modèles...",
+      noModelsAvailable: "Aucun modèle disponible",
+      providerDetails: "Détails du fournisseur",
+      capabilities: "Capacités",
+      defaultModel: "Modèle par défaut",
+      modelChanged: "Modèle changé en {{model}} ({{provider}})",
+      modelProvider: "Fournisseur de modèle",
+      selectModel: "Sélectionner un modèle",
+      mcpSettings: "Paramètres MCP",
+      streamingEnabled: "Streaming activé",
+      contextLength: "Longueur du contexte",
+      temperature: "Température"
     }
   },
   es: {
@@ -436,7 +466,22 @@ const resources = {
       
       // Errors
       errorMessage: "Lo siento, ocurrió un error. Por favor intenta de nuevo.",
-      analyticsError: "Error al cargar las analíticas"
+      analyticsError: "Error al cargar las analíticas",
+      
+      // Model Selector (MCP)
+      modelSelection: "Selección de modelo IA",
+      loadingModels: "Cargando modelos...",
+      noModelsAvailable: "No hay modelos disponibles",
+      providerDetails: "Detalles del proveedor",
+      capabilities: "Capacidades",
+      defaultModel: "Modelo predeterminado",
+      modelChanged: "Modelo cambiado a {{model}} ({{provider}})",
+      modelProvider: "Proveedor de modelo",
+      selectModel: "Seleccionar un modelo",
+      mcpSettings: "Configuración MCP",
+      streamingEnabled: "Streaming habilitado",
+      contextLength: "Longitud del contexto",
+      temperature: "Temperatura"
     }
   }
 };

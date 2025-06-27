@@ -254,3 +254,88 @@ v2.0:
 *[⬆️ Retour au README](README_v2.md) • [📖 Guide Migration](MIGRATION_GUIDE.md)*
 
 </div>
+
+# Changelog
+
+Tous les changements notables de ce projet seront documentés dans ce fichier.
+
+Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
+et ce projet adhère au [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [3.0.0] - 2024-12-27
+
+### 🎉 Ajouté
+
+#### Model Context Protocol (MCP)
+- Architecture MCP complète pour supporter plusieurs providers de modèles IA
+- Gestionnaire MCP centralisé (`MCPManager`) pour orchestrer les modèles
+- Client MCP simplifié (`MCPClient`) pour les interactions
+- Support du streaming en temps réel via WebSocket
+- API REST pour la gestion des modèles et providers
+- Tests unitaires complets pour le système MCP
+
+#### Intégration Ollama
+- Provider Ollama pour exécuter des modèles IA localement
+- Support des modèles : Llama2, Mistral, Phi, Gemma, Neural-chat
+- Installation automatique des modèles au démarrage Docker
+- Support GPU optionnel pour de meilleures performances
+- Configuration flexible via variables d'environnement
+
+#### Interface Utilisateur Améliorée
+- Nouveau composant `ModelSelector` pour changer de modèle en temps réel
+- Design UI/UX moderne et professionnel
+- Système de design avec variables CSS personnalisées
+- Animations fluides et transitions
+- Support thème clair/sombre amélioré
+- Visualisations en temps réel des émotions
+- Interface responsive optimisée pour mobile
+
+#### Infrastructure et DevOps
+- Script de démarrage Docker amélioré (`start_docker_enhanced.sh`)
+- Support du monitoring avec Prometheus et Grafana
+- Configuration Docker Compose étendue avec profils
+- Healthchecks pour tous les services
+- Volumes persistants pour les modèles Ollama
+
+#### Documentation
+- Guide complet MCP et Ollama (`README_MCP_OLLAMA.md`)
+- Documentation API étendue
+- Exemples de code pour toutes les fonctionnalités
+- Guide de troubleshooting
+
+### 🔄 Modifié
+
+#### Backend
+- API étendue avec nouveaux endpoints MCP
+- Meilleure gestion des erreurs asynchrones
+- Support des headers de langue dans WebSocket
+- Optimisation des performances de streaming
+
+#### Frontend
+- Refonte complète du CSS avec design system moderne
+- Amélioration de l'expérience utilisateur
+- Meilleure gestion de l'état avec React hooks
+- Traductions ajoutées pour les nouvelles fonctionnalités
+
+#### Infrastructure
+- Docker Compose optimisé avec services modulaires
+- Meilleure isolation des services
+- Configuration réseau améliorée
+
+### 🐛 Corrigé
+- Problèmes de reconnexion WebSocket
+- Fuites mémoire dans le gestionnaire de contexte
+- Erreurs de synchronisation des préférences utilisateur
+- Problèmes de rendu sur appareils mobiles
+
+### 🚀 Performance
+- Réduction du temps de démarrage de 40%
+- Optimisation de la consommation mémoire
+- Mise en cache améliorée des modèles
+- Chargement paresseux des composants React
+
+## [2.1.0] - 2024-11-15
+
+### Ajouté
+- Système de mémoire intelligente avec hiérarchie et consolidation
+- Analyse de personnalité basée sur le modèle Big Five
