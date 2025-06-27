@@ -1,7 +1,86 @@
-/old
-/gpt2_fine_tuned
-credentials.json
-token.json
-key.py
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+logs/
+*.log
+emoia_memory.db
+*.db-journal
+cache/
+models/*.pkl
+models/*.joblib
+models/*.pt
+models/*.bin
+
+# Environment variables
 .env
-ai_companion.db
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# React build
+frontend/build/
+frontend/.eslintcache
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.cache/
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files (optionnel, à adapter selon vos besoins)
+data/raw/
+data/processed/
+*.csv
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
