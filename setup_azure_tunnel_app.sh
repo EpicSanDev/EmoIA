@@ -196,7 +196,7 @@ if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
     
     # Ajouter les dépendances Azure manquantes
-    pip install azure-cognitiveservices-speech azure-cognitiveservices-vision-computervision azure-ai-textanalytics azure-translator-text
+    pip install azure-cognitiveservices-speech azure-cognitiveservices-vision-computervision azure-ai-textanalytics azure-ai-translation-text
     
     print_success "Dépendances backend installées"
 else
