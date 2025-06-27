@@ -1,479 +1,550 @@
 """
-RTX 2070 Super Optimization Module for EmoIA v3.0
-Maximizes GPU performance for AI inference with 8GB VRAM + 64GB System RAM
+Optimiseur RTX 2070 Super - Performance maximale pour EmoIA v3.0
 """
+
 import torch
 import psutil
 import GPUtil
-import logging
 import time
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass
-from threading import Thread, Lock
 import asyncio
-import yaml
+import logging
+from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import dataclass
+from threading import Lock
+from pathlib import Path
 import json
 
-@dataclass
-class GPUMetrics:
-    """GPU performance metrics."""
-    memory_used: float
-    memory_total: float
-    memory_utilization: float
-    temperature: float
-    power_draw: float
-    compute_utilization: float
-    timestamp: float
+logger = logging.getLogger(__name__)
 
 @dataclass
-class OptimizationSettings:
-    """RTX 2070 Super specific optimization settings."""
-    max_vram_gb: float = 7.5  # Reserve 0.5GB for system
-    max_system_ram_gb: float = 32  # Use 50% of 64GB for AI cache
-    compute_capability: str = "7.5"
-    tensor_cores_enabled: bool = True
-    mixed_precision: bool = True
-    dynamic_batching: bool = True
-    memory_growth: bool = True
-    cache_optimization: bool = True
+class GPUSpecs:
+    """Spécifications GPU RTX 2070 Super"""
+    name: str = "RTX 2070 Super"
+    memory: float = 8.0  # GB VRAM
+    compute_capability: float = 7.5
+    tensor_cores: bool = True
+    cuda_cores: int = 2560
+    base_clock: int = 1605  # MHz
+    boost_clock: int = 1770  # MHz
+    memory_bandwidth: float = 448.0  # GB/s
 
-class RTXOptimizer:
-    """
-    Advanced GPU optimizer for RTX 2070 Super.
-    Implements dynamic memory management, batch sizing, and performance monitoring.
-    """
+@dataclass
+class SystemSpecs:
+    """Spécifications système"""
+    total_ram: float = 64.0  # GB
+    cache_size: float = 32.0  # GB pour cache IA
+    cpu_cores: int = psutil.cpu_count() or 4
+    cpu_threads: int = psutil.cpu_count(logical=True) or 8
+
+@dataclass
+class PerformanceMetrics:
+    """Métriques de performance temps réel"""
+    gpu_utilization: float = 0.0
+    gpu_memory_used: float = 0.0
+    gpu_memory_free: float = 0.0
+    gpu_temperature: float = 0.0
+    system_memory_used: float = 0.0
+    inference_time: float = 0.0
+    batch_size_optimal: int = 1
+    tokens_per_second: float = 0.0
+    power_consumption: float = 0.0
     
-    def __init__(self, config_path: str = "config.yaml"):
-        self.settings = OptimizationSettings()
-        self.metrics_lock = Lock()
-        self.current_metrics: Optional[GPUMetrics] = None
-        self.performance_history: List[GPUMetrics] = []
-        self.optimized_batch_sizes: Dict[str, int] = {}
-        self.model_cache: Dict[str, Any] = {}
-        self.memory_pool = None
+class RTXOptimizer:
+    """Optimiseur RTX 2070 Super pour EmoIA v3.0"""
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        self.config = config or {}
+        self.gpu_specs = GPUSpecs()
+        self.system_specs = SystemSpecs()
         
-        # Load configuration
-        self.load_config(config_path)
+        # État interne
+        self.metrics = PerformanceMetrics()
+        self.lock = Lock()
+        self.monitoring_active = False
+        self.optimization_cache = {}
         
-        # Initialize GPU
-        self.initialize_gpu()
+        # Paramètres d'optimisation
+        self.max_batch_size = 8
+        self.memory_buffer = 1.0  # GB à réserver
+        self.target_memory_usage = 0.85  # 85% de la VRAM
         
-        # Start monitoring thread
-        self.monitoring_active = True
-        self.monitor_thread = Thread(target=self._monitor_gpu, daemon=True)
-        self.monitor_thread.start()
+        # Cache et modèles
+        self.model_cache = {}
+        self.tensor_cache = {}
         
-        logging.info("RTX 2070 Super Optimizer initialized successfully")
-
-    def load_config(self, config_path: str):
-        """Load optimization settings from config file."""
+        logger.info(f"RTXOptimizer initialisé pour {self.gpu_specs.name}")
+    
+    async def initialize(self) -> bool:
+        """Initialise l'optimiseur RTX"""
         try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+            # Vérifier CUDA
+            if not torch.cuda.is_available():
+                logger.error("CUDA non disponible!")
+                return False
             
-            gpu_config = config.get('gpu_optimization', {})
+            # Vérifier RTX 2070 Super
+            gpu_name = torch.cuda.get_device_name(0)
+            if "RTX 2070" not in gpu_name and "RTX 20" not in gpu_name:
+                logger.warning(f"GPU détecté: {gpu_name} (optimisé pour RTX 2070 Super)")
             
-            if gpu_config.get('enabled', True):
-                self.settings.max_vram_gb = gpu_config.get('memory_limit', 7.5)
-                self.settings.mixed_precision = gpu_config.get('mixed_precision', True)
-                self.settings.dynamic_batching = gpu_config.get('dynamic_batching', True)
-                
-                memory_config = gpu_config.get('memory_management', {})
-                self.settings.memory_growth = memory_config.get('dynamic_batching', True)
-                
-        except Exception as e:
-            logging.warning(f"Could not load config: {e}. Using defaults.")
-
-    def initialize_gpu(self):
-        """Initialize GPU with optimal settings for RTX 2070 Super."""
-        try:
-            # Set CUDA device
-            if torch.cuda.is_available():
-                device = torch.device("cuda:0")
-                torch.cuda.set_device(0)
-                
-                # Enable optimizations
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cudnn.deterministic = False
-                
-                # Configure memory management
-                if self.settings.memory_growth:
-                    torch.cuda.empty_cache()
-                
-                # Set memory fraction for RTX 2070 Super (8GB VRAM)
-                memory_fraction = self.settings.max_vram_gb / 8.0
-                torch.cuda.set_per_process_memory_fraction(memory_fraction)
-                
-                # Enable mixed precision if supported
-                if self.settings.mixed_precision:
-                    # Verify Tensor Core support
-                    capability = torch.cuda.get_device_capability()
-                    if capability[0] >= 7:  # RTX 2070 Super has compute capability 7.5
-                        self.settings.tensor_cores_enabled = True
-                        logging.info("Tensor Cores enabled for mixed precision")
-                
-                logging.info(f"GPU initialized: {torch.cuda.get_device_name()}")
-                logging.info(f"VRAM limit set to: {self.settings.max_vram_gb:.1f}GB")
-                
-            else:
-                logging.error("CUDA not available - falling back to CPU")
-                
-        except Exception as e:
-            logging.error(f"GPU initialization failed: {e}")
-
-    def _monitor_gpu(self):
-        """Background thread for continuous GPU monitoring."""
-        while self.monitoring_active:
-            try:
-                metrics = self._collect_metrics()
-                if metrics:
-                    with self.metrics_lock:
-                        self.current_metrics = metrics
-                        self.performance_history.append(metrics)
-                        
-                        # Keep only last 1000 metrics (about 16 minutes at 1sec intervals)
-                        if len(self.performance_history) > 1000:
-                            self.performance_history = self.performance_history[-1000:]
-                
-                time.sleep(1)  # Monitor every second
-                
-            except Exception as e:
-                logging.error(f"GPU monitoring error: {e}")
-                time.sleep(5)  # Wait longer on error
-
-    def _collect_metrics(self) -> Optional[GPUMetrics]:
-        """Collect current GPU metrics."""
-        try:
-            gpus = GPUtil.getGPUs()
-            if not gpus:
-                return None
+            # Configuration CUDA optimale
+            await self._configure_cuda_optimal()
             
-            gpu = gpus[0]  # RTX 2070 Super
+            # Démarrer le monitoring
+            self.monitoring_active = True
+            asyncio.create_task(self._monitoring_loop())
             
-            return GPUMetrics(
-                memory_used=gpu.memoryUsed,
-                memory_total=gpu.memoryTotal,
-                memory_utilization=gpu.memoryUtil * 100,
-                temperature=gpu.temperature,
-                power_draw=getattr(gpu, 'powerDraw', 0),
-                compute_utilization=gpu.load * 100,
-                timestamp=time.time()
-            )
+            # Tests de performance initiaux
+            await self._benchmark_initial()
+            
+            logger.info("RTXOptimizer initialisé avec succès")
+            return True
             
         except Exception as e:
-            logging.error(f"Error collecting GPU metrics: {e}")
-            return None
-
-    def get_optimal_batch_size(self, model_type: str, input_shape: Tuple[int, ...]) -> int:
-        """Calculate optimal batch size for current GPU state."""
-        try:
-            cache_key = f"{model_type}_{input_shape}"
-            
-            # Return cached result if available
-            if cache_key in self.optimized_batch_sizes:
-                return self.optimized_batch_sizes[cache_key]
-            
-            # Get current memory usage
-            current_metrics = self.get_current_metrics()
-            if not current_metrics:
-                return 8  # Conservative default
-            
-            # Calculate available memory
-            available_memory = (current_metrics.memory_total - current_metrics.memory_used) * 0.8  # 80% safety margin
-            
-            # Estimate memory per sample (simplified)
-            memory_per_sample = self._estimate_memory_per_sample(model_type, input_shape)
-            
-            # Calculate optimal batch size
-            optimal_batch = max(1, int(available_memory / memory_per_sample))
-            optimal_batch = min(optimal_batch, 32)  # Cap at 32 for stability
-            
-            # Cache the result
-            self.optimized_batch_sizes[cache_key] = optimal_batch
-            
-            logging.info(f"Optimal batch size for {model_type}: {optimal_batch}")
-            return optimal_batch
-            
-        except Exception as e:
-            logging.error(f"Error calculating optimal batch size: {e}")
-            return 8
-
-    def _estimate_memory_per_sample(self, model_type: str, input_shape: Tuple[int, ...]) -> float:
-        """Estimate memory usage per sample in MB."""
-        # Simplified estimation based on model type and input
-        base_memory = {
-            'transformer': 50,  # MB per sample
-            'cnn': 30,
-            'rnn': 20,
-            'embedding': 10
-        }
+            logger.error(f"Erreur initialisation RTXOptimizer: {e}")
+            return False
+    
+    async def _configure_cuda_optimal(self):
+        """Configure CUDA pour performance optimale"""
         
-        model_memory = base_memory.get(model_type.lower(), 40)
+        # Paramètres CUDA optimaux RTX 2070 Super
+        torch.backends.cudnn.enabled = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
         
-        # Adjust for input size
-        input_size_factor = 1.0
-        if len(input_shape) > 1:
-            total_elements = 1
-            for dim in input_shape[1:]:  # Skip batch dimension
-                total_elements *= dim
-            input_size_factor = max(1.0, total_elements / 512)  # Normalize to 512 elements
+        # Gestion mémoire optimisée
+        torch.cuda.empty_cache()
         
-        return model_memory * input_size_factor
-
-    def optimize_model_loading(self, model: torch.nn.Module, model_name: str) -> torch.nn.Module:
-        """Optimize model for RTX 2070 Super."""
-        try:
-            # Move to GPU
-            if torch.cuda.is_available():
-                model = model.cuda()
+        # Configuration des streams CUDA
+        self.cuda_streams = [
+            torch.cuda.Stream() for _ in range(4)
+        ]
+        
+        # Configuration Tensor Cores
+        if self.gpu_specs.tensor_cores:
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cuda.matmul.allow_tf32 = True
             
-            # Enable mixed precision if supported
-            if self.settings.mixed_precision and self.settings.tensor_cores_enabled:
-                model = model.half()  # Convert to FP16
-                logging.info(f"Model {model_name} converted to FP16 for Tensor Cores")
-            
-            # Compile model for optimization (PyTorch 2.0+)
-            if hasattr(torch, 'compile'):
-                try:
-                    model = torch.compile(model, mode='reduce-overhead')
-                    logging.info(f"Model {model_name} compiled for optimization")
-                except Exception as e:
-                    logging.warning(f"Model compilation failed: {e}")
-            
-            # Cache the optimized model
-            self.model_cache[model_name] = model
-            
-            return model
-            
-        except Exception as e:
-            logging.error(f"Model optimization failed for {model_name}: {e}")
-            return model
-
-    def create_memory_pool(self, pool_size_gb: float = 16.0):
-        """Create optimized memory pool for faster allocations."""
-        try:
-            if torch.cuda.is_available():
-                # Pre-allocate memory pool
-                pool_size_bytes = int(pool_size_gb * 1024 * 1024 * 1024)
-                dummy_tensor = torch.zeros(pool_size_bytes // 4, dtype=torch.float32, device='cuda')
-                del dummy_tensor
-                torch.cuda.empty_cache()
-                
-                logging.info(f"Memory pool created: {pool_size_gb}GB")
-                
-        except Exception as e:
-            logging.error(f"Memory pool creation failed: {e}")
-
-    def optimize_inference(self, model: torch.nn.Module, input_data: torch.Tensor, 
-                          model_type: str = 'transformer') -> torch.Tensor:
-        """Perform optimized inference."""
-        try:
-            # Get optimal batch size
-            batch_size = self.get_optimal_batch_size(model_type, input_data.shape)
-            
-            # Process in optimal batches
-            results = []
-            for i in range(0, input_data.size(0), batch_size):
-                batch = input_data[i:i+batch_size]
-                
-                # Use autocast for mixed precision
-                if self.settings.mixed_precision:
-                    with torch.cuda.amp.autocast():
-                        batch_result = model(batch)
-                else:
-                    batch_result = model(batch)
-                
-                results.append(batch_result)
-            
-            # Concatenate results
-            return torch.cat(results, dim=0)
-            
-        except Exception as e:
-            logging.error(f"Optimized inference failed: {e}")
-            return model(input_data)  # Fallback
-
-    def get_current_metrics(self) -> Optional[GPUMetrics]:
-        """Get current GPU metrics thread-safely."""
-        with self.metrics_lock:
-            return self.current_metrics
-
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get comprehensive performance statistics."""
-        try:
-            with self.metrics_lock:
-                if not self.performance_history:
-                    return {}
-                
-                recent_metrics = self.performance_history[-60:]  # Last minute
-                
-                # Calculate statistics
-                memory_utils = [m.memory_utilization for m in recent_metrics]
-                compute_utils = [m.compute_utilization for m in recent_metrics]
-                temperatures = [m.temperature for m in recent_metrics]
-                
-                stats = {
-                    'current_memory_usage': recent_metrics[-1].memory_used if recent_metrics else 0,
-                    'current_memory_util': recent_metrics[-1].memory_utilization if recent_metrics else 0,
-                    'current_compute_util': recent_metrics[-1].compute_utilization if recent_metrics else 0,
-                    'current_temperature': recent_metrics[-1].temperature if recent_metrics else 0,
-                    'avg_memory_util': sum(memory_utils) / len(memory_utils),
-                    'avg_compute_util': sum(compute_utils) / len(compute_utils),
-                    'avg_temperature': sum(temperatures) / len(temperatures),
-                    'max_memory_util': max(memory_utils),
-                    'max_temperature': max(temperatures),
-                    'optimized_batch_sizes': dict(self.optimized_batch_sizes),
-                    'cached_models': list(self.model_cache.keys())
-                }
-                
-                return stats
-                
-        except Exception as e:
-            logging.error(f"Error calculating performance stats: {e}")
-            return {}
-
-    def auto_optimize_system(self):
-        """Automatically optimize system settings based on current performance."""
-        try:
-            current_metrics = self.get_current_metrics()
-            if not current_metrics:
-                return
-            
-            # Check memory pressure
-            if current_metrics.memory_utilization > 90:
-                logging.warning("High GPU memory usage detected - clearing cache")
-                torch.cuda.empty_cache()
-                
-                # Clear model cache if needed
-                if len(self.model_cache) > 3:
-                    # Remove oldest cached models
-                    models_to_remove = list(self.model_cache.keys())[:2]
-                    for model_name in models_to_remove:
-                        del self.model_cache[model_name]
-                    logging.info(f"Cleared cached models: {models_to_remove}")
-            
-            # Check temperature
-            if current_metrics.temperature > 80:
-                logging.warning("High GPU temperature detected - reducing performance")
-                # Reduce batch sizes
-                for key in self.optimized_batch_sizes:
-                    self.optimized_batch_sizes[key] = max(1, self.optimized_batch_sizes[key] // 2)
-            
-            # Check compute utilization
-            if current_metrics.compute_utilization < 30:
-                logging.info("Low GPU utilization - increasing batch sizes")
-                # Increase batch sizes cautiously
-                for key in self.optimized_batch_sizes:
-                    self.optimized_batch_sizes[key] = min(32, int(self.optimized_batch_sizes[key] * 1.2))
-                    
-        except Exception as e:
-            logging.error(f"Auto-optimization failed: {e}")
-
-    def get_optimization_recommendations(self) -> List[str]:
-        """Get optimization recommendations based on performance history."""
-        recommendations = []
+        logger.info("Configuration CUDA optimale appliquée")
+    
+    async def optimize_model_loading(self, model_type: str, model_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimise le chargement des modèles IA"""
         
         try:
-            stats = self.get_performance_stats()
-            if not stats:
-                return recommendations
+            # Calcul de la mémoire nécessaire
+            estimated_memory = self._estimate_model_memory(model_type, model_config)
             
-            # Memory recommendations
-            if stats.get('avg_memory_util', 0) > 85:
-                recommendations.append("Consider reducing model sizes or batch sizes - high memory usage detected")
-            elif stats.get('avg_memory_util', 0) < 50:
-                recommendations.append("GPU memory underutilized - consider increasing batch sizes")
+            # Vérification mémoire disponible
+            available_memory = self._get_available_gpu_memory()
             
-            # Compute recommendations
-            if stats.get('avg_compute_util', 0) < 40:
-                recommendations.append("Low GPU utilization - consider parallel processing or larger models")
+            if estimated_memory > available_memory:
+                # Stratégies d'optimisation mémoire
+                model_config = await self._apply_memory_optimizations(model_config, estimated_memory, available_memory)
             
-            # Temperature recommendations
-            if stats.get('max_temperature', 0) > 75:
-                recommendations.append("High temperatures detected - check cooling and reduce workload if needed")
-            
-            # Model cache recommendations
-            if len(stats.get('cached_models', [])) < 2:
-                recommendations.append("Consider pre-loading frequently used models for better performance")
-            
-            return recommendations
-            
-        except Exception as e:
-            logging.error(f"Error generating recommendations: {e}")
-            return []
-
-    def export_performance_report(self, filepath: str = "gpu_performance_report.json"):
-        """Export detailed performance report."""
-        try:
-            report = {
-                'system_info': {
-                    'gpu_name': torch.cuda.get_device_name() if torch.cuda.is_available() else 'N/A',
-                    'cuda_version': torch.version.cuda,
-                    'pytorch_version': torch.__version__,
-                    'system_ram_gb': psutil.virtual_memory().total / (1024**3),
-                    'optimization_settings': {
-                        'max_vram_gb': self.settings.max_vram_gb,
-                        'mixed_precision': self.settings.mixed_precision,
-                        'tensor_cores_enabled': self.settings.tensor_cores_enabled,
-                        'dynamic_batching': self.settings.dynamic_batching
-                    }
-                },
-                'performance_stats': self.get_performance_stats(),
-                'recommendations': self.get_optimization_recommendations(),
-                'timestamp': time.time()
+            # Configuration optimale pour RTX 2070 Super
+            optimized_config = {
+                **model_config,
+                "device": "cuda:0",
+                "torch_dtype": torch.float16,  # Utilisation FP16 pour Tensor Cores
+                "attn_implementation": "flash_attention_2",  # Flash Attention si disponible
+                "use_cache": True,
+                "pad_token_id": 0,
+                "max_memory": {0: f"{self.target_memory_usage * self.gpu_specs.memory}GB"},
+                "device_map": {"": 0},
+                "offload_folder": "./cache/offload",
+                "offload_state_dict": True if estimated_memory > available_memory else False
             }
             
-            with open(filepath, 'w') as f:
-                json.dump(report, f, indent=2)
+            # Cache de configuration
+            cache_key = f"{model_type}_{hash(str(model_config))}"
+            self.optimization_cache[cache_key] = optimized_config
             
-            logging.info(f"Performance report exported to {filepath}")
+            logger.info(f"Configuration optimisée pour {model_type}: {estimated_memory:.2f}GB")
+            
+            return optimized_config
             
         except Exception as e:
-            logging.error(f"Error exporting performance report: {e}")
-
-    def cleanup(self):
-        """Clean up resources."""
+            logger.error(f"Erreur optimisation modèle {model_type}: {e}")
+            return model_config
+    
+    def _estimate_model_memory(self, model_type: str, config: Dict[str, Any]) -> float:
+        """Estime la mémoire nécessaire pour un modèle"""
+        
+        # Estimations basées sur les types de modèles courants
+        memory_estimates = {
+            "llama": {
+                "7b": 4.0,
+                "13b": 8.0,
+                "30b": 16.0,
+                "65b": 32.0
+            },
+            "mistral": {
+                "7b": 4.2,
+                "22b": 12.0
+            },
+            "codellama": {
+                "7b": 4.5,
+                "13b": 8.5,
+                "34b": 18.0
+            },
+            "embedding": 0.5,
+            "emotion": 0.8,
+            "tts": 1.2,
+            "vision": 2.0
+        }
+        
+        model_size = config.get("model_size", "7b").lower()
+        base_memory = memory_estimates.get(model_type, {}).get(model_size, 4.0)
+        
+        # Ajustements pour FP16/FP32
+        if config.get("torch_dtype") == "float32":
+            base_memory *= 2
+        
+        # Mémoire pour le cache KV
+        context_length = config.get("max_length", 2048)
+        cache_memory = (context_length / 2048) * 0.5
+        
+        return base_memory + cache_memory
+    
+    def _get_available_gpu_memory(self) -> float:
+        """Obtient la mémoire GPU disponible"""
         try:
-            self.monitoring_active = False
-            if self.monitor_thread.is_alive():
-                self.monitor_thread.join(timeout=5)
-            
-            # Clear model cache
-            self.model_cache.clear()
-            
-            # Clear CUDA cache
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                memory_free = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
+                return memory_free / (1024**3)  # Conversion en GB
+            return 0.0
+        except:
+            return 0.0
+    
+    async def _apply_memory_optimizations(self, config: Dict[str, Any], needed: float, available: float) -> Dict[str, Any]:
+        """Applique des optimisations mémoire"""
+        
+        optimized_config = config.copy()
+        
+        # Réduction de la précision
+        if needed > available * 0.9:
+            optimized_config["torch_dtype"] = torch.int8
+            optimized_config["load_in_8bit"] = True
+            needed *= 0.5
+            logger.info("Optimisation 8-bit activée")
+        
+        # Gradient checkpointing
+        if needed > available * 0.8:
+            optimized_config["gradient_checkpointing"] = True
+            optimized_config["use_cache"] = False
+            logger.info("Gradient checkpointing activé")
+        
+        # Model sharding
+        if needed > available:
+            optimized_config["device_map"] = "auto"
+            optimized_config["max_memory"] = {0: f"{available * 0.9:.1f}GB", "cpu": "30GB"}
+            logger.info("Model sharding activé")
+        
+        return optimized_config
+    
+    async def dynamic_batch_sizing(self, input_data: List[Any], model_type: str) -> Tuple[List[List[Any]], int]:
+        """Ajuste dynamiquement la taille des batches"""
+        
+        try:
+            # Taille de batch initiale basée sur le type de modèle
+            base_batch_sizes = {
+                "llama": 4,
+                "mistral": 6,
+                "embedding": 32,
+                "emotion": 16,
+                "small": 8
+            }
             
-            logging.info("RTX Optimizer cleanup completed")
+            initial_batch_size = base_batch_sizes.get(model_type, 4)
+            
+            # Ajustement basé sur la mémoire disponible
+            available_memory = self._get_available_gpu_memory()
+            memory_factor = min(1.0, available_memory / 2.0)  # 2GB minimum
+            optimal_batch_size = max(1, int(initial_batch_size * memory_factor))
+            
+                         # Ajustement basé sur la longueur des inputs
+             if input_data:
+                 lengths = [len(str(item)) for item in input_data]
+                 avg_length = sum(lengths) / len(lengths) if lengths else 0
+                 if avg_length > 1000:  # Inputs longs
+                     optimal_batch_size = max(1, optimal_batch_size // 2)
+                 elif avg_length < 100:  # Inputs courts
+                     optimal_batch_size = min(self.max_batch_size, optimal_batch_size * 2)
+            
+            # Création des batches
+            batches = []
+            for i in range(0, len(input_data), optimal_batch_size):
+                batch = input_data[i:i + optimal_batch_size]
+                batches.append(batch)
+            
+            self.metrics.batch_size_optimal = optimal_batch_size
+            
+            logger.debug(f"Batch dynamique: {len(batches)} batches de taille {optimal_batch_size}")
+            
+            return batches, optimal_batch_size
             
         except Exception as e:
-            logging.error(f"Cleanup error: {e}")
-
+            logger.error(f"Erreur batch sizing: {e}")
+            return [input_data], 1
+    
+    async def _monitoring_loop(self):
+        """Boucle de monitoring des performances"""
+        
+        while self.monitoring_active:
+            try:
+                await self._update_metrics()
+                
+                # Auto-ajustements basés sur les métriques
+                await self._auto_optimization()
+                
+                await asyncio.sleep(1.0)  # Monitoring chaque seconde
+                
+            except Exception as e:
+                logger.error(f"Erreur monitoring: {e}")
+                await asyncio.sleep(5.0)
+    
+    async def _update_metrics(self):
+        """Met à jour les métriques de performance"""
+        
+        try:
+            # Métriques GPU
+            if torch.cuda.is_available():
+                self.metrics.gpu_memory_used = torch.cuda.memory_allocated(0) / (1024**3)
+                self.metrics.gpu_memory_free = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
+                self.metrics.gpu_utilization = self._get_gpu_utilization()
+                self.metrics.gpu_temperature = self._get_gpu_temperature()
+            
+            # Métriques système
+            memory = psutil.virtual_memory()
+            self.metrics.system_memory_used = memory.used / (1024**3)
+            
+        except Exception as e:
+            logger.debug(f"Erreur mise à jour métriques: {e}")
+    
+    def _get_gpu_utilization(self) -> float:
+        """Obtient l'utilisation GPU"""
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                return gpus[0].load * 100
+            return 0.0
+        except:
+            return 0.0
+    
+    def _get_gpu_temperature(self) -> float:
+        """Obtient la température GPU"""
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                return gpus[0].temperature
+            return 0.0
+        except:
+            return 0.0
+    
+    async def _auto_optimization(self):
+        """Optimisations automatiques basées sur les métriques"""
+        
+        # Gestion de la mémoire
+        if self.metrics.gpu_memory_used / self.gpu_specs.memory > 0.9:
+            await self._free_gpu_memory()
+        
+        # Gestion de la température
+        if self.metrics.gpu_temperature > 80:
+            await self._reduce_gpu_load()
+    
+    async def _free_gpu_memory(self):
+        """Libère la mémoire GPU"""
+        torch.cuda.empty_cache()
+        
+        # Nettoie les caches anciens
+        current_time = time.time()
+        for key in list(self.tensor_cache.keys()):
+            if current_time - self.tensor_cache[key].get("timestamp", 0) > 300:  # 5 minutes
+                del self.tensor_cache[key]
+        
+        logger.info("Mémoire GPU libérée")
+    
+    async def _reduce_gpu_load(self):
+        """Réduit la charge GPU en cas de surchauffe"""
+        logger.warning(f"Température GPU élevée: {self.metrics.gpu_temperature}°C")
+        
+        # Réduction temporaire du batch size
+        self.max_batch_size = max(1, self.max_batch_size // 2)
+        
+        # Pause courte
+        await asyncio.sleep(2.0)
+    
+    async def _benchmark_initial(self):
+        """Effectue des benchmarks initiaux"""
+        
+        logger.info("Benchmarking initial RTX 2070 Super...")
+        
+        # Test de bande passante mémoire
+        memory_bandwidth = await self._test_memory_bandwidth()
+        
+        # Test de calcul FP16
+        fp16_performance = await self._test_fp16_performance()
+        
+        # Test de calcul FP32
+        fp32_performance = await self._test_fp32_performance()
+        
+        logger.info(f"Benchmarks: Bande passante: {memory_bandwidth:.2f} GB/s, FP16: {fp16_performance:.2f} TFLOPS, FP32: {fp32_performance:.2f} TFLOPS")
+    
+    async def _test_memory_bandwidth(self) -> float:
+        """Test de bande passante mémoire"""
+        try:
+            size = 100 * 1024 * 1024  # 100M éléments
+            a = torch.randn(size, device='cuda')
+            b = torch.randn(size, device='cuda')
+            
+            torch.cuda.synchronize()
+            start_time = time.time()
+            
+            for _ in range(10):
+                c = a + b
+                torch.cuda.synchronize()
+            
+            end_time = time.time()
+            
+            # Calcul de la bande passante
+            bytes_transferred = size * 4 * 3 * 10  # 4 bytes par float, 3 tensors, 10 iterations
+            bandwidth = bytes_transferred / (end_time - start_time) / (1024**3)
+            
+            del a, b, c
+            torch.cuda.empty_cache()
+            
+            return bandwidth
+        except:
+            return 0.0
+    
+    async def _test_fp16_performance(self) -> float:
+        """Test de performance FP16"""
+        try:
+            size = 1024
+            a = torch.randn(size, size, device='cuda', dtype=torch.float16)
+            b = torch.randn(size, size, device='cuda', dtype=torch.float16)
+            
+            torch.cuda.synchronize()
+            start_time = time.time()
+            
+            for _ in range(100):
+                c = torch.matmul(a, b)
+                torch.cuda.synchronize()
+            
+            end_time = time.time()
+            
+            # Calcul TFLOPS
+            ops = size * size * size * 2 * 100  # Multiplications + additions
+            tflops = ops / (end_time - start_time) / 1e12
+            
+            del a, b, c
+            torch.cuda.empty_cache()
+            
+            return tflops
+        except:
+            return 0.0
+    
+    async def _test_fp32_performance(self) -> float:
+        """Test de performance FP32"""
+        try:
+            size = 1024
+            a = torch.randn(size, size, device='cuda', dtype=torch.float32)
+            b = torch.randn(size, size, device='cuda', dtype=torch.float32)
+            
+            torch.cuda.synchronize()
+            start_time = time.time()
+            
+            for _ in range(50):
+                c = torch.matmul(a, b)
+                torch.cuda.synchronize()
+            
+            end_time = time.time()
+            
+            # Calcul TFLOPS
+            ops = size * size * size * 2 * 50
+            tflops = ops / (end_time - start_time) / 1e12
+            
+            del a, b, c
+            torch.cuda.empty_cache()
+            
+            return tflops
+        except:
+            return 0.0
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Retourne les métriques actuelles"""
+        return {
+            "gpu_utilization": self.metrics.gpu_utilization,
+            "gpu_memory_used": self.metrics.gpu_memory_used,
+            "gpu_memory_free": self.metrics.gpu_memory_free,
+            "gpu_temperature": self.metrics.gpu_temperature,
+            "system_memory_used": self.metrics.system_memory_used,
+            "batch_size_optimal": self.metrics.batch_size_optimal,
+            "tokens_per_second": self.metrics.tokens_per_second
+        }
+    
+    async def optimize_inference(self, model_type: str, input_data: Any, model_instance: Any = None) -> Tuple[Any, Dict[str, float]]:
+        """Optimise une inférence IA"""
+        
+        start_time = time.time()
+        
+        try:
+            # Préparation optimisée des données
+            if isinstance(input_data, list):
+                batches, batch_size = await self.dynamic_batch_sizing(input_data, model_type)
+            else:
+                batches = [[input_data]]
+                batch_size = 1
+            
+            results = []
+            
+            # Traitement par batches optimisés
+            for batch in batches:
+                if len(batch) == 1:
+                    # Optimisation pour batch unitaire
+                    with torch.cuda.amp.autocast(enabled=True):
+                        result = await self._process_single_inference(batch[0], model_instance)
+                else:
+                    # Optimisation pour batch multiple
+                    with torch.cuda.amp.autocast(enabled=True):
+                        result = await self._process_batch_inference(batch, model_instance)
+                
+                results.extend(result if isinstance(result, list) else [result])
+            
+            end_time = time.time()
+            
+            # Métriques de performance
+            inference_time = end_time - start_time
+            self.metrics.inference_time = inference_time
+            
+            if isinstance(input_data, str):
+                tokens = len(input_data.split())
+                self.metrics.tokens_per_second = tokens / inference_time
+            
+            performance_metrics = {
+                "inference_time": inference_time,
+                "batch_size": batch_size,
+                "gpu_memory_used": self.metrics.gpu_memory_used,
+                "tokens_per_second": self.metrics.tokens_per_second
+            }
+            
+            return results[0] if len(results) == 1 else results, performance_metrics
+            
+                 except Exception as e:
+             logger.error(f"Erreur optimisation inférence: {e}")
+             return None, {"error": str(e), "inference_time": 0.0}
+    
+    async def _process_single_inference(self, input_data: Any, model_instance: Any) -> Any:
+        """Traite une inférence unique optimisée"""
+        # Placeholder - à implémenter selon le modèle spécifique
+        return input_data
+    
+    async def _process_batch_inference(self, batch: List[Any], model_instance: Any) -> List[Any]:
+        """Traite un batch d'inférences optimisé"""
+        # Placeholder - à implémenter selon le modèle spécifique
+        return batch
+    
     def __del__(self):
-        """Destructor."""
-        self.cleanup()
-
-# Singleton instance
-_rtx_optimizer = None
-
-def get_rtx_optimizer() -> RTXOptimizer:
-    """Get singleton RTX optimizer instance."""
-    global _rtx_optimizer
-    if _rtx_optimizer is None:
-        _rtx_optimizer = RTXOptimizer()
-    return _rtx_optimizer
-
-# Convenience functions
-async def optimize_model_async(model: torch.nn.Module, model_name: str) -> torch.nn.Module:
-    """Async wrapper for model optimization."""
-    optimizer = get_rtx_optimizer()
-    return optimizer.optimize_model_loading(model, model_name)
-
-async def get_performance_metrics_async() -> Dict[str, Any]:
-    """Async wrapper for performance metrics."""
-    optimizer = get_rtx_optimizer()
-    return optimizer.get_performance_stats()
-
-def setup_rtx_optimization(config_path: str = "config.yaml") -> RTXOptimizer:
-    """Setup RTX optimization with configuration."""
-    return RTXOptimizer(config_path)
+        """Nettoyage lors de la destruction"""
+        self.monitoring_active = False
+        torch.cuda.empty_cache()
