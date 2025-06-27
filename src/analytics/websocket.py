@@ -1,47 +1,119 @@
-from fastapi import WebSocket, APIRouter
-from fastapi.websockets import WebSocketDisconnect
+"""
+Module WebSocket pour les analytics en temps réel
+"""
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import asyncio
 import json
-import random
+import logging
+from typing import Dict, Set
 from datetime import datetime
-from src.config import Config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Données simulées pour les analytics
-analytics_data = {
-    "active_users": 0,
-    "emotions": {"joy": 0, "sadness": 0, "anger": 0, "fear": 0, "surprise": 0},
-    "avg_response_time": 0.5
-}
+# Gestionnaire de connexions WebSocket
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = set()
+        self.active_connections[user_id].add(websocket)
+        logger.info(f"WebSocket connecté pour l'utilisateur {user_id}")
+        
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        if user_id in self.active_connections:
+            self.active_connections[user_id].discard(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
+        logger.info(f"WebSocket déconnecté pour l'utilisateur {user_id}")
+        
+    async def send_analytics(self, user_id: str, data: dict):
+        """Envoie des données analytics à un utilisateur spécifique"""
+        if user_id in self.active_connections:
+            for websocket in self.active_connections[user_id]:
+                try:
+                    await websocket.send_json(data)
+                except Exception as e:
+                    logger.error(f"Erreur envoi WebSocket: {e}")
+                    
+    async def broadcast_to_all(self, data: dict):
+        """Diffuse des données à tous les utilisateurs connectés"""
+        for user_id, connections in self.active_connections.items():
+            for websocket in connections:
+                try:
+                    await websocket.send_json(data)
+                except Exception as e:
+                    logger.error(f"Erreur broadcast WebSocket: {e}")
 
-# Stockage des connexions WebSocket
-active_connections = []
+# Instance globale du gestionnaire
+manager = ConnectionManager()
 
-@router.websocket("/ws/analytics")
-async def websocket_analytics(websocket: WebSocket):
-    await websocket.accept()
-    active_connections.append(websocket)
-    analytics_data["active_users"] = len(active_connections)
+@router.websocket("/ws/analytics/{user_id}")
+async def analytics_websocket_endpoint(websocket: WebSocket, user_id: str):
+    """
+    Endpoint WebSocket pour les analytics en temps réel
+    
+    Args:
+        websocket: Connexion WebSocket
+        user_id: ID de l'utilisateur
+    """
+    await manager.connect(websocket, user_id)
     
     try:
+        # Envoyer les données initiales
+        initial_data = {
+            "type": "connection",
+            "status": "connected",
+            "timestamp": datetime.now().isoformat(),
+            "user_id": user_id
+        }
+        await websocket.send_json(initial_data)
+        
+        # Boucle de réception des messages
         while True:
-            # Mettre à jour les données analytiques (simulation)
-            analytics_data["emotions"] = {
-                "joy": random.randint(0, 100),
-                "sadness": random.randint(0, 50),
-                "anger": random.randint(0, 30),
-                "fear": random.randint(0, 20),
-                "surprise": random.randint(0, 10)
-            }
-            analytics_data["avg_response_time"] = round(random.uniform(0.1, 1.0), 2)
-            analytics_data["timestamp"] = datetime.utcnow().isoformat()
+            data = await websocket.receive_json()
             
-            # Envoyer à tous les connexions actives
-            for connection in active_connections:
-                await connection.send_json(analytics_data)
+            # Traiter les différents types de messages
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
             
-            await asyncio.sleep(1)  # Envoyer des mises à jour chaque seconde
+            elif data.get("type") == "request_analytics":
+                # Envoyer les analytics demandées
+                analytics_data = {
+                    "type": "analytics_update",
+                    "timestamp": datetime.now().isoformat(),
+                    "data": {
+                        "emotions": {"joy": 0.7, "sadness": 0.1, "neutral": 0.2},
+                        "interaction_count": 42,
+                        "sentiment_trend": "positive"
+                    }
+                }
+                await websocket.send_json(analytics_data)
+                
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
-        analytics_data["active_users"] = len(active_connections)
+        manager.disconnect(websocket, user_id)
+        logger.info(f"Client {user_id} déconnecté")
+    except Exception as e:
+        logger.error(f"Erreur WebSocket: {e}")
+        manager.disconnect(websocket, user_id)
+
+# Fonction utilitaire pour envoyer des mises à jour analytics
+async def send_analytics_update(user_id: str, analytics_data: dict):
+    """
+    Envoie une mise à jour analytics à un utilisateur via WebSocket
+    
+    Args:
+        user_id: ID de l'utilisateur
+        analytics_data: Données analytics à envoyer
+    """
+    data = {
+        "type": "analytics_update",
+        "timestamp": datetime.now().isoformat(),
+        "data": analytics_data
+    }
+    await manager.send_analytics(user_id, data)
