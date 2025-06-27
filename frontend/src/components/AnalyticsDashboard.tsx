@@ -73,7 +73,7 @@ const AnalyticsDashboard: React.FC<Props> = ({ userId }) => {
   };
 
   const connectWebSocket = () => {
-    const ws = new WebSocket(`ws://localhost:8001/ws/analytics/${userId}`);
+    const ws = new WebSocket(`ws://localhost:8000/ws/analytics/${userId}`);
     
     ws.onopen = () => {
       setWsConnected(true);
@@ -192,7 +192,7 @@ const AnalyticsDashboard: React.FC<Props> = ({ userId }) => {
         cornerRadius: 8,
         titleFont: {
           size: 14,
-          weight: 'bold'
+          weight: 'bold' as const
         },
         bodyFont: {
           size: 12

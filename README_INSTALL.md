@@ -167,7 +167,7 @@ cd frontend && npm start
 - 🌐 **Interface Web** : http://localhost:3000
 - 🔧 **API REST** : http://localhost:8000
 - 📚 **Documentation API** : http://localhost:8000/docs
-- 🔌 **WebSocket** : ws://localhost:8001/ws/chat
+- 🔌 **WebSocket** : ws://localhost:8000/ws/chat
 
 ### Interface en ligne de commande
 
@@ -208,7 +208,7 @@ POST /utilisateur/preferences
 ### WebSocket
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8001/ws/chat');
+const ws = new WebSocket('ws://localhost:8000/ws/chat');
 
 ws.send(JSON.stringify({
   user_id: "demo-user",
@@ -266,52 +266,8 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 #### Port déjà utilisé
 ```bash
 # Changer le port dans config.yaml
-api_port: 8001  # au lieu de 8000
+api_port: 8000  # au lieu de 8001
 ```
 
 #### Modèles non trouvés
-```bash
-# Vérifier que les modèles sont téléchargés
-python -c "from transformers import pipeline; pipeline('sentiment-analysis')"
 ```
-
-### Logs
-
-Les logs sont disponibles dans :
-- `logs/emoia.log` : Logs principaux
-- Console : Logs en temps réel
-
-## 📈 Performance
-
-### Optimisations recommandées
-
-1. **GPU** : Utiliser CUDA pour de meilleures performances
-2. **Cache Redis** : Activer pour les déploiements multi-utilisateurs
-3. **Modèles quantifiés** : Réduire l'utilisation mémoire
-
-### Métriques
-
-- Temps de réponse moyen : < 500ms
-- Utilisation mémoire : ~4GB (CPU) / ~6GB (GPU)
-- Connexions simultanées : 100+
-
-## 🤝 Contribution
-
-Les contributions sont bienvenues ! Voir [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## 📄 Licence
-
-Ce projet est sous licence MIT. Voir [LICENSE](LICENSE)
-
-## 🙏 Remerciements
-
-- Hugging Face pour les modèles de transformers
-- FastAPI pour le framework API
-- React pour l'interface utilisateur
-- La communauté open source
-
----
-
-<div align="center">
-  Fait avec ❤️ par l'équipe EmoIA
-</div>

@@ -99,7 +99,7 @@ communication:
   
   # WebSocket pour temps réel
   websocket_enabled: true
-  websocket_port: 8001
+  websocket_port: 8000
   
   # Sécurité
   api_key: null

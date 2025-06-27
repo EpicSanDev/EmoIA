@@ -51,7 +51,7 @@ interface EmotionalAnalysis {
 
 // Constants
 const API_URL = 'http://localhost:8000';
-const WS_URL = 'ws://localhost:8001/ws/chat';
+const WS_URL = 'ws://localhost:8000/ws/chat';
 
 function App() {
   const { t, i18n } = useTranslation();

@@ -109,7 +109,7 @@ class CommunicationConfig(BaseSettings):
     
     # WebSocket
     websocket_enabled: bool = True
-    websocket_port: int = 8001
+    websocket_port: int = 8000
     
     # Sécurité
     api_key: Optional[str] = None
