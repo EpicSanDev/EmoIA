@@ -66,13 +66,13 @@ class MCPManager:
         except Exception as e:
             logger.warning(f"Impossible de charger Ollama provider: {e}")
             
-        # OpenAI-compatible provider
-        try:
-            from .providers.openai_provider import OpenAIProvider
-            openai = OpenAIProvider()
-            await self.register_provider("openai", openai)
-        except Exception as e:
-            logger.warning(f"Impossible de charger OpenAI provider: {e}")
+        # OpenAI-compatible provider (commented out until implemented)
+        # try:
+        #     from .providers.openai_provider import OpenAIProvider
+        #     openai = OpenAIProvider()
+        #     await self.register_provider("openai", openai)
+        # except Exception as e:
+        #     logger.warning(f"Impossible de charger OpenAI provider: {e}")
             
     async def register_provider(self, name: str, provider: Any):
         """Enregistre un nouveau provider MCP"""

@@ -143,6 +143,7 @@ class LearningConfig(BaseSettings):
     
     class Config:
         env_prefix = "EMOIA_LEARNING_"
+        protected_namespaces = ('settings_',)
 
 
 class Config(BaseSettings):
