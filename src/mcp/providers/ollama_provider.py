@@ -62,6 +62,8 @@ class OllamaProvider(MCPProvider):
     async def _ensure_session(self):
         """S'assure que la session est initialisée"""
         if not self._session or self._session.closed:
+            if self._session and not self._session.closed:
+                await self._session.close()
             await self.initialize()
             
     async def send_completion(self,

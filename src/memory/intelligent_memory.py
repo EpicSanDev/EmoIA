@@ -914,3 +914,238 @@ class IntelligentMemorySystem:
                     concepts.append(learning_item)
         
         return sorted(concepts, key=lambda x: x.last_reviewed, reverse=True)
+
+    # ==================== GESTION TDAH ====================
+    
+    async def create_tdah_task(
+        self,
+        user_id: str,
+        title: str,
+        description: str = "",
+        priority: int = 3,
+        category: str = "general",
+        due_date: Optional[datetime] = None,
+        estimated_duration: Optional[int] = None,
+        emotional_state: Optional[str] = None
+    ) -> str:
+        """Crée une nouvelle tâche TDAH"""
+        try:
+            task_id = f"task_{hashlib.md5(f'{user_id}_{title}_{datetime.now()}'.encode()).hexdigest()[:12]}"
+            
+            task = TDAHTask(
+                id=task_id,
+                title=title,
+                description=description,
+                priority=priority,
+                due_date=due_date,
+                completed=False,
+                created_at=datetime.now(),
+                category=category,
+                estimated_duration=estimated_duration,
+                emotional_state=emotional_state
+            )
+            
+            # Stocker en mémoire
+            self.tdah_tasks[task_id] = task
+            
+            # Sauvegarder en base de données
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS tdah_tasks (
+                        task_id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        title TEXT,
+                        description TEXT,
+                        priority INTEGER,
+                        due_date TEXT,
+                        completed BOOLEAN,
+                        created_at TEXT,
+                        category TEXT,
+                        estimated_duration INTEGER,
+                        emotional_state TEXT
+                    )
+                """)
+                
+                cursor.execute("""
+                    INSERT INTO tdah_tasks 
+                    (task_id, user_id, title, description, priority, due_date, completed, 
+                     created_at, category, estimated_duration, emotional_state)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    task_id, user_id, title, description, priority,
+                    due_date.isoformat() if due_date else None, False,
+                    task.created_at.isoformat(), category, estimated_duration, emotional_state
+                ))
+                
+                conn.commit()
+                conn.close()
+            
+            # Ajouter en mémoire long terme
+            if self.embedding_model:
+                await self.store_memory(
+                    content=f"Tâche TDAH créée: {title} - {description}",
+                    user_id=user_id,
+                    importance=0.7,
+                    memory_type="tdah",
+                    tags=["tâche", "tdah", category]
+                )
+            
+            logger.info(f"Tâche TDAH créée pour {user_id}: {title}")
+            return task_id
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la création de la tâche TDAH: {e}")
+            return ""
+    
+    async def get_tdah_tasks(
+        self,
+        user_id: str,
+        completed: Optional[bool] = None,
+        category: Optional[str] = None,
+        priority_min: int = 1
+    ) -> List[TDAHTask]:
+        """Récupère les tâches TDAH d'un utilisateur"""
+        try:
+            # Charger depuis la base de données si pas en mémoire
+            await self._load_tdah_tasks_from_db(user_id)
+            
+            tasks = []
+            for task in self.tdah_tasks.values():
+                # Filtrer par utilisateur
+                task_user_id = getattr(task, 'user_id', None)
+                if task_user_id != user_id:
+                    continue
+                    
+                # Vérifier les filtres
+                if completed is not None and task.completed != completed:
+                    continue
+                if category and task.category != category:
+                    continue
+                if task.priority < priority_min:
+                    continue
+                
+                tasks.append(task)
+            
+            return sorted(tasks, key=lambda x: x.created_at, reverse=True)
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des tâches TDAH: {e}")
+            return []
+    
+    async def _load_tdah_tasks_from_db(self, user_id: str):
+        """Charge les tâches TDAH depuis la base de données"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT task_id, user_id, title, description, priority, due_date, 
+                           completed, created_at, category, estimated_duration, emotional_state
+                    FROM tdah_tasks WHERE user_id = ?
+                """, (user_id,))
+                
+                for row in cursor.fetchall():
+                    task_id, uid, title, description, priority, due_date, completed, created_at, category, estimated_duration, emotional_state = row
+                    
+                    if task_id not in self.tdah_tasks:
+                        task = TDAHTask(
+                            id=task_id,
+                            title=title,
+                            description=description or "",
+                            priority=priority,
+                            due_date=datetime.fromisoformat(due_date) if due_date else None,
+                            completed=bool(completed),
+                            created_at=datetime.fromisoformat(created_at),
+                            category=category or "general",
+                            estimated_duration=estimated_duration,
+                            emotional_state=emotional_state
+                        )
+                        # Ajouter l'user_id comme attribut
+                        task.user_id = uid
+                        self.tdah_tasks[task_id] = task
+                
+                conn.close()
+                
+        except Exception as e:
+            logger.error(f"Erreur lors du chargement des tâches TDAH: {e}")
+    
+    async def complete_tdah_task(self, user_id: str, task_id: str) -> bool:
+        """Marque une tâche TDAH comme terminée"""
+        try:
+            if task_id not in self.tdah_tasks:
+                await self._load_tdah_tasks_from_db(user_id)
+            
+            if task_id in self.tdah_tasks:
+                task = self.tdah_tasks[task_id]
+                task.completed = True
+                
+                # Mettre à jour en base
+                with self.db_lock:
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        UPDATE tdah_tasks SET completed = 1 WHERE task_id = ?
+                    """, (task_id,))
+                    
+                    conn.commit()
+                    conn.close()
+                
+                logger.info(f"Tâche TDAH {task_id} marquée comme terminée")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la complétion de la tâche TDAH: {e}")
+            return False
+    
+    async def get_tdah_suggestions(self, user_id: str) -> List[str]:
+        """Génère des suggestions pour la gestion du TDAH"""
+        try:
+            # Récupérer les tâches de l'utilisateur
+            tasks = await self.get_tdah_tasks(user_id)
+            
+            suggestions = []
+            
+            # Analyser les patterns
+            active_tasks = [t for t in tasks if not t.completed]
+            completed_tasks = [t for t in tasks if t.completed]
+            
+            if len(active_tasks) > 10:
+                suggestions.append("Vous avez beaucoup de tâches en cours. Considérez en prioriser quelques-unes.")
+            
+            if len(active_tasks) == 0:
+                suggestions.append("Excellent ! Vous n'avez aucune tâche en cours. C'est le moment d'en planifier de nouvelles.")
+            
+            # Analyser les priorités
+            high_priority = [t for t in active_tasks if t.priority >= 4]
+            if len(high_priority) > 3:
+                suggestions.append("Vous avez plusieurs tâches haute priorité. Concentrez-vous sur une à la fois.")
+            
+            # Analyser les échéances
+            overdue_tasks = []
+            today = datetime.now()
+            for task in active_tasks:
+                if task.due_date and task.due_date < today:
+                    overdue_tasks.append(task)
+            
+            if overdue_tasks:
+                suggestions.append(f"Vous avez {len(overdue_tasks)} tâche(s) en retard. Considérez les reprioriser.")
+            
+            # Suggestions générales
+            if len(completed_tasks) > len(active_tasks):
+                suggestions.append("Bravo ! Vous terminez plus de tâches que vous n'en créez. Gardez cette dynamique !")
+            
+            if not suggestions:
+                suggestions.append("Votre gestion des tâches semble équilibrée. Continuez comme ça !")
+            
+            return suggestions
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération des suggestions TDAH: {e}")
+            return ["Erreur lors de l'analyse de vos tâches."]
