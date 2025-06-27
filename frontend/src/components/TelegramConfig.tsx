@@ -42,6 +42,10 @@ const TelegramConfig: React.FC = () => {
   const fetchStatus = async () => {
     try {
       const response = await fetch('/api/telegram/status');
+      if (!response.ok) {
+        console.error(`Error fetching status: ${response.status}`);
+        return;
+      }
       const data = await response.json();
       setStatus(data);
     } catch (error) {
@@ -52,6 +56,10 @@ const TelegramConfig: React.FC = () => {
   const fetchUsers = async () => {
     try {
       const response = await fetch('/api/telegram/users');
+      if (!response.ok) {
+        console.error(`Error fetching users: ${response.status}`);
+        return;
+      }
       const data = await response.json();
       setUsers(data.users || []);
     } catch (error) {
@@ -73,6 +81,23 @@ const TelegramConfig: React.FC = () => {
         body: JSON.stringify(config),
       });
 
+      if (!response.ok) {
+        if (response.status === 502) {
+          setMessage({ 
+            type: 'error', 
+            text: 'Erreur de connexion au backend. Vérifiez que le serveur EmoIA est démarré sur le port 8000.' 
+          });
+          return;
+        }
+        
+        const errorText = await response.text();
+        setMessage({ 
+          type: 'error', 
+          text: `Erreur ${response.status}: ${errorText || 'Erreur serveur'}` 
+        });
+        return;
+      }
+
       const result = await response.json();
 
       if (result.status === 'success') {
@@ -83,7 +108,11 @@ const TelegramConfig: React.FC = () => {
         setMessage({ type: 'error', text: result.message });
       }
     } catch (error) {
-      setMessage({ type: 'error', text: 'Erreur lors de la configuration' });
+      console.error('Configuration error:', error);
+      setMessage({ 
+        type: 'error', 
+        text: `Erreur de réseau: ${error instanceof Error ? error.message : 'Impossible de contacter le serveur'}` 
+      });
     } finally {
       setLoading(false);
     }
