@@ -58,15 +58,51 @@ class MCPManager:
         
     async def _load_default_providers(self):
         """Charge les providers par défaut"""
-        # Ollama provider
+        # Charger la configuration
+        from ..config import Config
+        config = Config()
+        
+        # Azure provider (priorité en premier)
+        if hasattr(config, 'azure') and config.azure.get('openai', {}).get('enabled', False):
+            try:
+                from .providers.azure_provider import AzureProvider
+                azure_config = {
+                    'openai_endpoint': config.azure['openai']['endpoint'],
+                    'openai_api_key': config.azure['openai']['api_key'],
+                    'openai_api_version': config.azure['openai']['api_version'],
+                    'default_model': config.azure['openai']['default_model'],
+                    # Services cognitifs
+                    'speech_api_key': config.azure.get('speech', {}).get('api_key'),
+                    'speech_region': config.azure.get('speech', {}).get('region', 'westeurope'),
+                    'vision_endpoint': config.azure.get('vision', {}).get('endpoint'),
+                    'vision_api_key': config.azure.get('vision', {}).get('api_key'),
+                    'translator_endpoint': config.azure.get('translator', {}).get('endpoint'),
+                    'translator_api_key': config.azure.get('translator', {}).get('api_key'),
+                    'translator_region': config.azure.get('translator', {}).get('region', 'westeurope'),
+                    'language_endpoint': config.azure.get('language', {}).get('endpoint'),
+                    'language_api_key': config.azure.get('language', {}).get('api_key'),
+                    'search_endpoint': config.azure.get('search', {}).get('endpoint'),
+                    'search_api_key': config.azure.get('search', {}).get('api_key'),
+                }
+                azure = AzureProvider(azure_config)
+                await self.register_provider("azure", azure)
+                self.default_provider = "azure"  # Azure comme provider par défaut
+                logger.info("✅ Provider Azure configuré comme défaut")
+            except Exception as e:
+                logger.warning(f"Impossible de charger Azure provider: {e}")
+        
+        # Ollama provider (fallback)
         try:
             from .providers.ollama_provider import OllamaProvider
             ollama = OllamaProvider()
             await self.register_provider("ollama", ollama)
+            # Si Azure n'est pas disponible, utiliser Ollama comme défaut
+            if self.default_provider == "ollama" and "azure" not in self.providers:
+                logger.info("🦙 Ollama configuré comme provider par défaut")
         except Exception as e:
             logger.warning(f"Impossible de charger Ollama provider: {e}")
             
-        # OpenAI-compatible provider (commented out until implemented)
+        # OpenAI-compatible provider (commenté jusqu'à implémentation)
         # try:
         #     from .providers.openai_provider import OpenAIProvider
         #     openai = OpenAIProvider()

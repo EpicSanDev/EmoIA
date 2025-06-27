@@ -41,6 +41,64 @@ gpu_optimization:
     gradient_accumulation_steps: 4
     max_sequence_length: 4096
 
+# === CONFIGURATION AZURE CLOUD SERVICES ===
+azure:
+  # Configuration Azure OpenAI
+  openai:
+    enabled: true
+    endpoint: "https://YOUR_RESOURCE_NAME.openai.azure.com"
+    api_key: "YOUR_AZURE_OPENAI_KEY"
+    api_version: "2024-02-15-preview"
+    default_model: "gpt-4"
+    models:
+      - "gpt-4"
+      - "gpt-4-32k"
+      - "gpt-35-turbo"
+      - "gpt-35-turbo-16k"
+      - "text-embedding-ada-002"
+    
+  # Configuration Speech Services
+  speech:
+    enabled: true
+    api_key: "YOUR_SPEECH_KEY"
+    region: "westeurope"
+    default_voice: "fr-FR-DeniseNeural"
+    voices:
+      fr: ["fr-FR-DeniseNeural", "fr-FR-HenriNeural", "fr-FR-JosephineNeural"]
+      en: ["en-US-AriaNeural", "en-US-DavisNeural", "en-US-JennyNeural"]
+      es: ["es-ES-AlvaroNeural", "es-ES-ElviraNeural"]
+    
+  # Configuration Vision Services
+  vision:
+    enabled: true
+    endpoint: "https://YOUR_REGION.api.cognitive.microsoft.com"
+    api_key: "YOUR_VISION_KEY"
+    
+  # Configuration Language Services
+  language:
+    enabled: true
+    endpoint: "https://YOUR_REGION.api.cognitive.microsoft.com"
+    api_key: "YOUR_LANGUAGE_KEY"
+    
+  # Configuration Translator
+  translator:
+    enabled: true
+    endpoint: "https://api.cognitive.microsofttranslator.com"
+    api_key: "YOUR_TRANSLATOR_KEY"
+    region: "westeurope"
+    
+  # Configuration Cognitive Search
+  search:
+    enabled: false  # Optionnel
+    endpoint: "https://YOUR_SEARCH_SERVICE.search.windows.net"
+    api_key: "YOUR_SEARCH_KEY"
+    
+  # Configuration Form Recognizer
+  forms:
+    enabled: false  # Optionnel
+    endpoint: "https://YOUR_REGION.api.cognitive.microsoft.com"
+    api_key: "YOUR_FORMS_KEY"
+
 # === CONFIGURATION MODÈLES IA AVANCÉS ===
 models:
   # Modèle principal optimisé pour RTX 2070 Super
@@ -209,6 +267,67 @@ memory:
     max_memory: "16gb"  # 25% de la RAM
     eviction_policy: "allkeys-lru"
     persistence: true
+
+# === MODEL CONTEXT PROTOCOL (MCP) ===
+mcp:
+  # Configuration des providers
+  default_provider: "azure"  # Provider par défaut
+  
+  providers:
+    azure:
+      enabled: true
+      class: "AzureProvider"
+      config:
+        openai_endpoint: "${azure.openai.endpoint}"
+        openai_api_key: "${azure.openai.api_key}"
+        openai_api_version: "${azure.openai.api_version}"
+        default_model: "${azure.openai.default_model}"
+        
+        # Services cognitifs
+        cognitive_endpoint: "${azure.language.endpoint}"
+        cognitive_api_key: "${azure.language.api_key}"
+        
+        speech_endpoint: "https://${azure.speech.region}.api.cognitive.microsoft.com"
+        speech_api_key: "${azure.speech.api_key}"
+        speech_region: "${azure.speech.region}"
+        
+        vision_endpoint: "${azure.vision.endpoint}"
+        vision_api_key: "${azure.vision.api_key}"
+        
+        translator_endpoint: "${azure.translator.endpoint}"
+        translator_api_key: "${azure.translator.api_key}"
+        translator_region: "${azure.translator.region}"
+        
+        language_endpoint: "${azure.language.endpoint}"
+        language_api_key: "${azure.language.api_key}"
+        
+        search_endpoint: "${azure.search.endpoint}"
+        search_api_key: "${azure.search.api_key}"
+        
+    ollama:
+      enabled: true
+      class: "OllamaProvider"
+      base_url: "http://ollama:11434"
+      default_model: "llama2"
+      
+  # Configuration avancée
+  context_management:
+    max_context_length: 8000
+    context_compression: true
+    smart_truncation: true
+    
+  # Performance et cache
+  performance:
+    request_timeout: 30
+    max_concurrent_requests: 10
+    cache_responses: true
+    cache_ttl: 3600
+    
+  # Sécurité
+  security:
+    input_validation: true
+    output_filtering: true
+    rate_limiting: true
 
 # === COMMUNICATION MULTICANAL ===
 communication:
@@ -522,3 +641,52 @@ development:
   # CI/CD
   continuous_integration: true
   automated_deployment: false  # Sécurité production
+
+# === APPLICATION WEB NATIVE & TUNNEL ===
+webapp:
+  # Configuration PWA (Progressive Web App)
+  pwa:
+    enabled: true
+    offline_support: true
+    push_notifications: true
+    background_sync: true
+    installable: true
+    
+  # Configuration du tunnel
+  tunnel:
+    enabled: true
+    provider: "ngrok"  # ou "cloudflare", "localtunnel"
+    subdomain: "emoia-ai"
+    auth_token: "YOUR_TUNNEL_AUTH_TOKEN"
+    region: "eu"
+    protocol: "https"
+    port: 8000
+    
+    # Sécurité tunnel
+    basic_auth: false
+    ip_whitelist: []
+    rate_limit: 1000  # requests per hour
+    
+  # Configuration native
+  native_features:
+    device_integration: true
+    camera_access: true
+    microphone_access: true
+    location_access: false  # Respect de la vie privée
+    storage_access: true
+    notification_api: true
+    
+  # Performance
+  performance:
+    service_worker: true
+    lazy_loading: true
+    image_optimization: true
+    code_splitting: true
+    pre_caching: true
+    
+  # Sécurité
+  security:
+    https_only: true
+    content_security_policy: true
+    cors_policy: "strict"
+    xss_protection: true
