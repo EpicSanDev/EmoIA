@@ -1,0 +1,221 @@
+/* Import des variables de thème */
+@import './themes.css';
+
+.App {
+  text-align: center;
+  background-color: var(--primary-bg);
+  color: var(--primary-text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background-color: var(--header-bg);
+  min-height: 10vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: var(--header-text);
+  padding: 10px;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.lang-toggle {
+  margin-bottom: 10px;
+}
+
+.lang-toggle button {
+  margin: 0 5px;
+  padding: 5px 10px;
+  border: none;
+  background: var(--button-bg);
+  color: var(--button-text);
+  cursor: pointer;
+}
+
+.lang-toggle button.active {
+  background: var(--button-active-bg);
+  color: white;
+}
+
+nav {
+  display: flex;
+  gap: 10px;
+}
+
+nav button {
+  padding: 5px 15px;
+  border: none;
+  background: var(--button-bg);
+  color: var(--button-text);
+  cursor: pointer;
+}
+
+nav button.active {
+  background: var(--button-active-bg);
+  color: white;
+}
+
+main {
+  flex: 1;
+  padding: 20px 0;
+}
+
+.chat-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.messages-area {
+  height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--input-border);
+  border-radius: 5px;
+  padding: 10px;
+  margin-bottom: 10px;
+  text-align: left;
+  background-color: var(--primary-bg);
+}
+
+.message {
+  margin-bottom: 10px;
+}
+
+.message.user {
+  text-align: right;
+}
+
+.message.emoia {
+  text-align: left;
+}
+
+.bubble {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 18px;
+  max-width: 70%;
+}
+
+.user .bubble {
+  background-color: var(--bubble-user-bg);
+}
+
+.emoia .bubble {
+  background-color: var(--bubble-emoia-bg);
+}
+
+.input-area {
+  display: flex;
+  gap: 10px;
+}
+
+.input-area input {
+  flex-grow: 1;
+  padding: 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 5px;
+  background-color: var(--input-bg);
+  color: var(--primary-text);
+}
+
+.input-area button {
+  padding: 10px 20px;
+  background-color: var(--button-bg);
+  color: var(--button-text);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.input-area button:disabled {
+  background-color: #666666;
+  cursor: not-allowed;
+}
+
+.dashboard-container, .preferences-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: var(--primary-bg);
+}
+
+.preferences-form {
+  max-width: 500px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.form-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background-color: var(--input-bg);
+  color: var(--primary-text);
+}
+
+.theme-options {
+  display: flex;
+  gap: 10px;
+}
+
+.theme-options button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background-color: var(--input-bg);
+  color: var(--primary-text);
+  cursor: pointer;
+}
+
+.theme-options button.active {
+  background-color: var(--button-active-bg);
+  color: white;
+  border-color: var(--button-active-bg);
+}
+
+.save-btn {
+  padding: 10px 20px;
+  background-color: var(--button-bg);
+  color: var(--button-text);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.status-message {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: #4CAF50;
+  color: white;
+}
+
+footer {
+  margin-top: auto;
+  padding: 10px;
+  background-color: var(--footer-bg);
+  color: var(--primary-text);
+}
