@@ -13,6 +13,8 @@ import VoiceInput from './components/VoiceInput.tsx';
 import ConversationInsights from './components/ConversationInsights.tsx';
 import SmartSuggestions from './components/SmartSuggestions.tsx';
 import ModelSelector from './components/ModelSelector.tsx';
+import TaskManager from './components/TaskManager.tsx';
+import SmartCalendar from './components/SmartCalendar.tsx';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale, BarElement, Filler);
 
@@ -56,7 +58,7 @@ const WS_URL = 'ws://localhost:8000/ws/chat';
 
 function App() {
   const { t, i18n } = useTranslation();
-  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences' | 'insights'>('chat');
+  const [tab, setTab] = useState<'chat' | 'dashboard' | 'preferences' | 'insights' | 'tasks' | 'calendar'>('chat');
   const [userId, setUserId] = useState<string>('demo-user');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -444,12 +446,27 @@ function App() {
               {t('dashboardTab')}
             </button>
             <button
+              onClick={() => setTab('tasks')}
+              className={`nav-btn ${tab === 'tasks' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">📋</span>
+              {t('tasksTab')}
+            </button>
+            <button
+              onClick={() => setTab('calendar')}
+              className={`nav-btn ${tab === 'calendar' ? 'active' : ''}`}
+            >
+              <span className="nav-icon">📅</span>
+              {t('calendarTab')}
+            </button>
+            <button
               onClick={() => setTab('preferences')}
               className={`nav-btn ${tab === 'preferences' ? 'active' : ''}`}
             >
               <span className="nav-icon">⚙️</span>
               {t('preferencesTab')}
             </button>
+
           </nav>
         </div>
       </header>
@@ -776,6 +793,27 @@ function App() {
               )}
             </div>
           </div>
+        )}
+
+        {tab === 'tasks' && (
+          <TaskManager 
+            userId={userId}
+            onTaskAction={(action, task) => {
+              console.log('Task action:', action, task);
+              // You can add analytics or other actions here
+            }}
+          />
+        )}
+
+        {tab === 'calendar' && (
+          <SmartCalendar 
+            userId={userId}
+            onEventAction={(action, event) => {
+              console.log('Calendar action:', action, event);
+              // You can add analytics or other actions here
+            }}
+            tasks={[]} // You can pass tasks from state if needed
+          />
         )}
       </main>
       
