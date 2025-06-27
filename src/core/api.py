@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from ..config import Config
 from .emoia_main import EmoIA
 from src.models.user_preferences import UserPreferences  # Nouvelle importation
+from src.mcp import MCPClient, MCPManager  # Import MCP
 
 # Modèles de requête/réponse
 class ChatRequest(BaseModel):
@@ -37,6 +38,8 @@ class InsightRequest(BaseModel):
 # Initialisation
 config = Config()
 emoia = EmoIA(config)
+mcp_manager = MCPManager()  # Gestionnaire MCP
+mcp_client = MCPClient(mcp_manager)  # Client MCP
 
 app = FastAPI(
     title="EmoIA API",
@@ -95,6 +98,7 @@ def get_db():
 @app.on_event("startup")
 async def startup_event():
     await emoia.initialize()
+    await mcp_client.initialize()  # Initialiser MCP
 
 # Importer le routeur WebSocket pour les analytics
 from src.analytics.websocket import router as analytics_router
@@ -376,6 +380,154 @@ async def websocket_chat(ws: WebSocket):
         print(f"WebSocket déconnecté pour l'utilisateur {user_id}")
     except Exception as e:
         print(f"Erreur WebSocket: {e}")
+        await ws.send_json({"type": "error", "message": str(e)})
+
+# Nouveaux endpoints MCP
+@app.get("/mcp/providers", tags=["Intelligence"])
+async def get_mcp_providers():
+    """Liste tous les providers MCP disponibles
+    
+    Returns:
+        dict: Liste des providers et leurs capacités
+    """
+    providers = await mcp_client.get_providers()
+    provider_info = {}
+    
+    for provider in providers:
+        info = await mcp_manager.get_provider_info(provider)
+        provider_info[provider] = info
+        
+    return {"providers": provider_info}
+
+@app.get("/mcp/models", tags=["Intelligence"])
+async def get_mcp_models(provider: Optional[str] = None):
+    """Liste tous les modèles disponibles
+    
+    Args:
+        provider (str, optional): Filtrer par provider spécifique
+    
+    Returns:
+        dict: Modèles disponibles par provider
+    """
+    models = await mcp_client.list_available_models()
+    
+    if provider:
+        return {"models": {provider: models.get(provider, [])}}
+    
+    return {"models": models}
+
+class MCPChatRequest(BaseModel):
+    user_id: str
+    message: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    context_id: Optional[str] = None
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048
+
+@app.post("/mcp/chat", tags=["Intelligence"])
+async def mcp_chat(req: MCPChatRequest):
+    """Chat via MCP avec un modèle spécifique
+    
+    Args:
+        req (MCPChatRequest): Requête de chat MCP
+    
+    Returns:
+        dict: Réponse du modèle et métadonnées
+    """
+    try:
+        response = await mcp_client.chat(
+            user_id=req.user_id,
+            message=req.message,
+            provider=req.provider,
+            model=req.model,
+            context_id=req.context_id,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens
+        )
+        
+        return {
+            "response": response,
+            "provider": req.provider or "ollama",
+            "model": req.model,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/mcp/switch-model", tags=["Intelligence"])
+async def switch_mcp_model(user_id: str, provider: str, model: str):
+    """Change le modèle MCP pour un utilisateur
+    
+    Args:
+        user_id (str): ID de l'utilisateur
+        provider (str): Provider à utiliser
+        model (str): Modèle à utiliser
+    
+    Returns:
+        dict: Statut du changement
+    """
+    success = await mcp_client.switch_model(user_id, provider, model)
+    
+    if success:
+        return {"status": "success", "provider": provider, "model": model}
+    else:
+        raise HTTPException(status_code=400, detail="Échec du changement de modèle")
+
+@app.websocket("/ws/mcp")
+async def websocket_mcp(ws: WebSocket):
+    """WebSocket pour streaming MCP"""
+    await ws.accept()
+    user_id = None
+    
+    try:
+        while True:
+            data = await ws.receive_json()
+            
+            if data.get("type") == "identify":
+                user_id = data.get("user_id")
+                await ws.send_json({"type": "identified", "user_id": user_id})
+                continue
+                
+            if data.get("type") == "mcp_stream":
+                provider = data.get("provider", "ollama")
+                model = data.get("model")
+                message = data.get("message", "")
+                
+                # Créer le contexte
+                context = await mcp_manager.create_context(
+                    user_id=user_id,
+                    provider=provider,
+                    model=model
+                )
+                
+                # Stream la réponse
+                provider_instance = mcp_manager.providers.get(provider)
+                if provider_instance:
+                    messages = [{"role": "user", "content": message}]
+                    
+                    async for chunk in provider_instance.stream_completion(
+                        model=model or provider_instance.default_model,
+                        messages=messages
+                    ):
+                        await ws.send_json({
+                            "type": "mcp_chunk",
+                            "content": chunk,
+                            "provider": provider,
+                            "model": model
+                        })
+                        
+                    await ws.send_json({"type": "mcp_complete"})
+                else:
+                    await ws.send_json({
+                        "type": "error",
+                        "message": f"Provider {provider} non trouvé"
+                    })
+                    
+    except WebSocketDisconnect:
+        print(f"WebSocket MCP déconnecté pour l'utilisateur {user_id}")
+    except Exception as e:
+        print(f"Erreur WebSocket MCP: {e}")
         await ws.send_json({"type": "error", "message": str(e)})
 
 if __name__ == "__main__":

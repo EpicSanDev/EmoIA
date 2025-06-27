@@ -1,6 +1,43 @@
 version: '3.8'
 
 services:
+  # Service Ollama pour les modèles locaux
+  ollama:
+    image: ollama/ollama:latest
+    container_name: emoia-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./models/ollama:/models
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - emoia-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Pull des modèles au démarrage
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        sleep 5
+        ollama pull llama2:7b-chat
+        ollama pull mistral:latest
+        ollama pull phi:latest
+        wait
+
   # API Backend
   emoia-api:
     build:
@@ -15,11 +52,16 @@ services:
       - ./models:/app/models
       - ./cache:/app/cache
       - ./config.yaml:/app/config.yaml
+      - ./src:/app/src  # Pour le développement hot-reload
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MCP_DEFAULT_PROVIDER=ollama
     networks:
       - emoia-network
+    depends_on:
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -36,10 +78,14 @@ services:
       - "3000:3000"
     environment:
       - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000
     depends_on:
       - emoia-api
     networks:
       - emoia-network
+    volumes:
+      - ./frontend/src:/app/src  # Pour le développement hot-reload
+      - ./frontend/public:/app/public
 
   # Base de données PostgreSQL (optionnel, pour production)
   postgres:
@@ -71,6 +117,39 @@ services:
     profiles:
       - production
 
+  # Monitoring avec Prometheus (optionnel)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: emoia-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - emoia-network
+    profiles:
+      - monitoring
+
+  # Grafana pour la visualisation (optionnel)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: emoia-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - emoia-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
 networks:
   emoia-network:
     driver: bridge
@@ -78,3 +157,6 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:

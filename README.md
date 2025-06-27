@@ -16,8 +16,30 @@ EmoIA est une intelligence artificielle avancée dotée de capacités émotionne
 - **📊 Analytics en Temps Réel** : Dashboard avec visualisations des émotions et insights
 - **🤝 Suggestions Contextuelles** : Génération de suggestions intelligentes basées sur le contexte émotionnel
 - **🔄 Apprentissage Continu** : Amélioration constante basée sur les interactions
+- **🦙 Multi-Modèles IA** : Support de multiples modèles via MCP (Ollama, OpenAI, etc.)
+- **🎨 Interface UI/UX Moderne** : Design professionnel et responsive
 
-## 🚀 Démarrage Rapide
+## 🆕 Nouvelles Fonctionnalités v3.0
+
+### � Model Context Protocol (MCP)
+- Architecture flexible pour intégrer différents modèles IA
+- Changement de modèle en temps réel
+- Support du streaming pour les réponses
+- Gestion unifiée des contextes de conversation
+
+### 🦙 Intégration Ollama
+- Modèles IA locaux (Llama2, Mistral, Phi, etc.)
+- Pas de dépendance cloud
+- Performance optimisée avec support GPU
+- Installation automatique des modèles
+
+### 🎨 Interface Améliorée
+- Sélecteur de modèles intégré
+- Visualisations temps réel des émotions
+- Design moderne avec thème clair/sombre
+- Composants React optimisés
+
+## �🚀 Démarrage Rapide
 
 ### Prérequis
 
@@ -33,19 +55,26 @@ EmoIA est une intelligence artificielle avancée dotée de capacités émotionne
    cd emoia
    ```
 
-2. **Démarrer avec Docker**
+2. **Démarrer avec le script amélioré**
    ```bash
-   # Mode développement
-   ./start_docker.sh
-
-   # Mode production (avec PostgreSQL et Redis)
-   ./start_docker.sh production
+   # Rendre le script exécutable
+   chmod +x start_docker_enhanced.sh
+   
+   # Mode développement (recommandé pour commencer)
+   ./start_docker_enhanced.sh development
+   
+   # Mode production avec toutes les fonctionnalités
+   ./start_docker_enhanced.sh production
+   
+   # Mode avec monitoring (Prometheus + Grafana)
+   ./start_docker_enhanced.sh monitoring
    ```
 
 3. **Accéder à l'application**
    - 🌐 Frontend: http://localhost:3000
    - 📡 API: http://localhost:8000
    - 📚 Documentation API: http://localhost:8000/docs
+   - 🦙 Ollama: http://localhost:11434
 
 ### Installation Manuelle
 
@@ -88,6 +117,18 @@ curl -X POST "http://localhost:8000/chat" \
   }'
 ```
 
+#### Chat avec MCP (Multi-Modèles)
+```bash
+curl -X POST "http://localhost:8000/mcp/chat" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "user123",
+    "message": "Raconte-moi une histoire",
+    "provider": "ollama",
+    "model": "llama2"
+  }'
+```
+
 #### Obtenir des suggestions
 ```bash
 curl -X POST "http://localhost:8000/suggestions" \
@@ -125,6 +166,19 @@ ws.onmessage = (event) => {
 };
 ```
 
+### WebSocket MCP (Streaming)
+
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/mcp');
+
+ws.send(JSON.stringify({
+  type: 'mcp_stream',
+  provider: 'ollama',
+  model: 'mistral',
+  message: 'Explique-moi la photosynthèse'
+}));
+```
+
 ## 🏗️ Architecture
 
 ```
@@ -135,7 +189,10 @@ EmoIA/
 │   │   └── emoia_main.py  # Classe principale EmoIA
 │   ├── emotional/         # Module d'intelligence émotionnelle
 │   ├── memory/            # Système de mémoire
-│   └── models/            # Modèles et LLM
+│   ├── models/            # Modèles et LLM
+│   └── mcp/               # Model Context Protocol
+│       ├── mcp_manager.py # Gestionnaire MCP
+│       └── providers/     # Providers de modèles
 ├── frontend/              # Application React
 │   ├── src/
 │   │   ├── components/    # Composants React
@@ -156,6 +213,7 @@ pytest --cov=src tests/
 
 # Tests spécifiques
 pytest tests/test_emoia_main.py
+pytest tests/test_mcp.py
 ```
 
 ## 📊 Analyse Émotionnelle
@@ -173,6 +231,7 @@ Le fichier `config.yaml` permet de personnaliser :
 - Paramètres émotionnels
 - Configuration de la mémoire
 - Paramètres d'apprentissage
+- Configuration MCP
 
 ```yaml
 emotional:
@@ -181,7 +240,47 @@ emotional:
   base_personality:
     openness: 0.8
     conscientiousness: 0.7
+
+mcp:
+  default_provider: ollama
+  providers:
+    ollama:
+      base_url: http://ollama:11434
+      default_model: llama2
 ```
+
+## 🎯 Gestion des Modèles
+
+### Installer de nouveaux modèles Ollama
+
+```bash
+# Lister les modèles disponibles
+docker exec emoia-ollama ollama list
+
+# Installer un modèle
+docker exec emoia-ollama ollama pull llama2:13b
+docker exec emoia-ollama ollama pull mistral
+docker exec emoia-ollama ollama pull codellama
+```
+
+### Changer de modèle via l'API
+
+```bash
+curl -X POST "http://localhost:8000/mcp/switch-model" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "user123",
+    "provider": "ollama",
+    "model": "mistral"
+  }'
+```
+
+## 📚 Documentation Complète
+
+- [Architecture MCP et Ollama](README_MCP_OLLAMA.md)
+- [Guide d'installation détaillé](README_INSTALL.md)
+- [Documentation Frontend](README_FRONTEND.md)
+- [Guide de migration](MIGRATION_GUIDE.md)
 
 ## 🤝 Contribution
 
@@ -201,6 +300,7 @@ Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de
 
 - Équipe Hugging Face pour les modèles de transformers
 - Communauté FastAPI pour le framework web
+- Équipe Ollama pour les modèles locaux
 - Contributeurs open source
 
 ## 📞 Contact
