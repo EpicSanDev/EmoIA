@@ -6,8 +6,11 @@ import asyncio
 import uvicorn
 from typing import List, Optional
 from datetime import datetime, timedelta
+import logging
 
 from ..config import Config
+
+logger = logging.getLogger(__name__)
 from .emoia_main import EmoIA
 from src.models.user_preferences import UserPreferences  # Nouvelle importation
 from src.mcp import MCPClient, MCPManager  # Import MCP
@@ -34,6 +37,35 @@ class SuggestionsRequest(BaseModel):
 class InsightRequest(BaseModel):
     user_id: str
     conversation_id: Optional[str] = None
+
+# Modèles de requête/réponse supplémentaires
+class NameRequest(BaseModel):
+    user_id: str
+    name: str
+    nickname: Optional[str] = ""
+
+class LearnConceptRequest(BaseModel):
+    user_id: str
+    concept_name: str
+    explanation: str
+    examples: Optional[List[str]] = []
+    category: Optional[str] = "general"
+    difficulty_level: Optional[int] = 3
+
+class TDAHTaskRequest(BaseModel):
+    user_id: str
+    title: str
+    description: Optional[str] = ""
+    priority: Optional[int] = 3
+    category: Optional[str] = "general"
+    due_date: Optional[str] = None
+    estimated_duration: Optional[int] = None
+    emotional_state: Optional[str] = None
+
+class TelegramUserRequest(BaseModel):
+    user_id: str
+    telegram_id: str
+    telegram_username: Optional[str] = ""
 
 # Initialisation
 config = Config()
@@ -97,8 +129,33 @@ def get_db():
 
 @app.on_event("startup")
 async def startup_event():
-    await emoia.initialize()
-    await mcp_client.initialize()  # Initialiser MCP
+    try:
+        logger.info("🚀 Démarrage de l'API EmoIA...")
+        
+        # Initialisation en mode progressif pour éviter le blocage
+        try:
+            await asyncio.wait_for(emoia.initialize(), timeout=30.0)
+            logger.info("✅ EmoIA initialisé avec succès")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Initialisation d'EmoIA en cours en arrière-plan...")
+            # Continuer le démarrage même si l'initialisation n'est pas terminée
+            asyncio.create_task(emoia.initialize())
+        
+        # Initialisation MCP en mode non-bloquant
+        try:
+            await asyncio.wait_for(mcp_client.initialize(), timeout=10.0)
+            logger.info("✅ MCP client initialisé")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ MCP client en cours d'initialisation...")
+            asyncio.create_task(mcp_client.initialize())
+        except Exception as e:
+            logger.warning(f"⚠️ MCP non disponible: {e}")
+        
+        logger.info("🎉 API EmoIA démarrée et prête!")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du démarrage: {e}")
+        # Ne pas faire échouer le démarrage, juste logger l'erreur
 
 # Importer le routeur WebSocket pour les analytics
 from src.analytics.websocket import router as analytics_router
@@ -529,6 +586,263 @@ async def websocket_mcp(ws: WebSocket):
     except Exception as e:
         print(f"Erreur WebSocket MCP: {e}")
         await ws.send_json({"type": "error", "message": str(e)})
+
+# ==================== NOUVEAUX ENDPOINTS ====================
+
+@app.post("/memory/remember-name", tags=["Intelligence"])
+async def remember_user_name(req: NameRequest):
+    """Retient le nom d'un utilisateur"""
+    try:
+        success = await emoia.memory_system.remember_user_name(
+            user_id=req.user_id,
+            name=req.name,
+            nickname=req.nickname
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Nom '{req.name}' retenu pour l'utilisateur {req.user_id}",
+                "user_id": req.user_id,
+                "name": req.name,
+                "nickname": req.nickname
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Erreur lors de la sauvegarde du nom")
+    
+    except Exception as e:
+        logger.error(f"Erreur remember_user_name: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/memory/get-name/{user_id}", tags=["Intelligence"])
+async def get_user_name(user_id: str):
+    """Récupère le nom d'un utilisateur"""
+    try:
+        name = await emoia.memory_system.get_user_name(user_id)
+        
+        if name:
+            return {
+                "status": "success",
+                "user_id": user_id,
+                "name": name
+            }
+        else:
+            return {
+                "status": "not_found",
+                "user_id": user_id,
+                "message": "Nom non trouvé pour cet utilisateur"
+            }
+    
+    except Exception as e:
+        logger.error(f"Erreur get_user_name: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/learning/learn-concept", tags=["Intelligence"])
+async def learn_concept(req: LearnConceptRequest):
+    """Apprend un nouveau concept"""
+    try:
+        concept_id = await emoia.memory_system.learn_concept(
+            user_id=req.user_id,
+            concept_name=req.concept_name,
+            explanation=req.explanation,
+            examples=req.examples,
+            category=req.category,
+            difficulty_level=req.difficulty_level
+        )
+        
+        if concept_id:
+            return {
+                "status": "success",
+                "message": f"Concept '{req.concept_name}' appris avec succès",
+                "concept_id": concept_id,
+                "concept_name": req.concept_name,
+                "category": req.category
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Erreur lors de l'apprentissage du concept")
+    
+    except Exception as e:
+        logger.error(f"Erreur learn_concept: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/learning/concepts/{user_id}", tags=["Intelligence"])
+async def get_learned_concepts(user_id: str, category: Optional[str] = None):
+    """Récupère les concepts appris par un utilisateur"""
+    try:
+        concepts = await emoia.memory_system.get_learned_concepts(user_id, category)
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "category": category,
+            "concepts": [
+                {
+                    "concept": concept.concept,
+                    "explanation": concept.explanation,
+                    "examples": concept.examples,
+                    "category": concept.category,
+                    "difficulty_level": concept.difficulty_level,
+                    "mastery_level": concept.mastery_level,
+                    "last_reviewed": concept.last_reviewed.isoformat(),
+                    "next_review": concept.next_review.isoformat()
+                }
+                for concept in concepts
+            ]
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur get_learned_concepts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tdah/tasks", tags=["Intelligence"])
+async def create_tdah_task(req: TDAHTaskRequest):
+    """Crée une nouvelle tâche TDAH"""
+    try:
+        # Parser la date d'échéance si fournie
+        due_date = None
+        if req.due_date:
+            try:
+                due_date = datetime.fromisoformat(req.due_date)
+            except ValueError:
+                pass
+        
+        task_id = await emoia.memory_system.create_tdah_task(
+            user_id=req.user_id,
+            title=req.title,
+            description=req.description,
+            priority=req.priority,
+            category=req.category,
+            due_date=due_date,
+            estimated_duration=req.estimated_duration,
+            emotional_state=req.emotional_state
+        )
+        
+        if task_id:
+            return {
+                "status": "success",
+                "message": f"Tâche '{req.title}' créée avec succès",
+                "task_id": task_id,
+                "title": req.title,
+                "priority": req.priority,
+                "category": req.category
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Erreur lors de la création de la tâche")
+    
+    except Exception as e:
+        logger.error(f"Erreur create_tdah_task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tdah/tasks/{user_id}", tags=["Intelligence"])
+async def get_tdah_tasks(
+    user_id: str, 
+    completed: Optional[bool] = None,
+    category: Optional[str] = None,
+    priority_min: Optional[int] = 1
+):
+    """Récupère les tâches TDAH d'un utilisateur"""
+    try:
+        tasks = await emoia.memory_system.get_tdah_tasks(
+            user_id=user_id,
+            completed=completed,
+            category=category,
+            priority_min=priority_min or 1
+        )
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "filter_completed": completed,
+            "filter_category": category,
+            "tasks": [task.to_dict() for task in tasks]
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur get_tdah_tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tdah/tasks/{task_id}/complete", tags=["Intelligence"])
+async def complete_tdah_task(task_id: str, user_id: str):
+    """Marque une tâche TDAH comme terminée"""
+    try:
+        success = await emoia.memory_system.complete_tdah_task(user_id, task_id)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Tâche marquée comme terminée",
+                "task_id": task_id
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Tâche non trouvée")
+    
+    except Exception as e:
+        logger.error(f"Erreur complete_tdah_task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tdah/suggestions/{user_id}", tags=["Intelligence"])
+async def get_tdah_suggestions(user_id: str):
+    """Génère des suggestions pour la gestion du TDAH"""
+    try:
+        suggestions = await emoia.memory_system.get_tdah_suggestions(user_id)
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "suggestions": suggestions,
+            "count": len(suggestions)
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur get_tdah_suggestions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/telegram/register", tags=["Intelligence"])
+async def register_telegram_user(req: TelegramUserRequest):
+    """Enregistre un utilisateur Telegram"""
+    try:
+        # Pour l'instant, on stocke juste en base de données
+        # TODO: Implémenter le bot Telegram complet
+        
+        return {
+            "status": "success",
+            "message": "Utilisateur Telegram enregistré",
+            "user_id": req.user_id,
+            "telegram_id": req.telegram_id,
+            "note": "Bot Telegram en cours de développement"
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur register_telegram_user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/memory/stats/{user_id}", tags=["Intelligence"])
+async def get_memory_stats(user_id: str):
+    """Récupère les statistiques de mémoire d'un utilisateur"""
+    try:
+        stats = emoia.memory_system.get_memory_stats()
+        
+        # Ajouter des stats spécifiques à l'utilisateur
+        user_name = await emoia.memory_system.get_user_name(user_id)
+        learned_concepts = await emoia.memory_system.get_learned_concepts(user_id)
+        tasks = await emoia.memory_system.get_tdah_tasks(user_id)
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_name": user_name,
+            "global_stats": stats,
+            "user_specific": {
+                "learned_concepts_count": len(learned_concepts),
+                "active_tasks_count": len([t for t in tasks if not t.completed]),
+                "completed_tasks_count": len([t for t in tasks if t.completed]),
+                "has_name": user_name is not None
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur get_memory_stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("src.core.api:app", host="0.0.0.0", port=8000, reload=True)

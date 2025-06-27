@@ -37,13 +37,15 @@ class MemoryItem:
     importance: float
     emotional_state: Optional[EmotionalState] = None
     context: str = ""
-    memory_type: str = "episodic"  # episodic, semantic, procedural
+    memory_type: str = "episodic"  # episodic, semantic, procedural, name, learning, tdah
     access_count: int = 0
     last_accessed: datetime = field(default_factory=datetime.now)
     consolidation_level: int = 0  # 0: working, 1: short-term, 2: long-term
     embedding: Optional[np.ndarray] = None
     tags: List[str] = field(default_factory=list)
     user_id: str = ""
+    learning_category: str = ""  # Pour les apprentissages
+    tdah_task_type: str = ""  # Pour la gestion TDAH
     
     def __post_init__(self):
         if isinstance(self.timestamp, str):
@@ -65,7 +67,9 @@ class MemoryItem:
             "consolidation_level": self.consolidation_level,
             "embedding": self.embedding.tolist() if self.embedding is not None else None,
             "tags": self.tags,
-            "user_id": self.user_id
+            "user_id": self.user_id,
+            "learning_category": self.learning_category,
+            "tdah_task_type": self.tdah_task_type
         }
     
     @classmethod
@@ -90,8 +94,68 @@ class MemoryItem:
             consolidation_level=data.get("consolidation_level", 0),
             embedding=embedding,
             tags=data.get("tags", []),
-            user_id=data.get("user_id", "")
+            user_id=data.get("user_id", ""),
+            learning_category=data.get("learning_category", ""),
+            tdah_task_type=data.get("tdah_task_type", "")
         )
+
+
+@dataclass
+class TDAHTask:
+    """Tâche pour la gestion TDAH"""
+    
+    id: str
+    title: str
+    description: str
+    priority: int  # 1-5
+    due_date: Optional[datetime] = None
+    completed: bool = False
+    created_at: datetime = field(default_factory=datetime.now)
+    category: str = ""  # travail, personnel, santé, etc.
+    estimated_duration: Optional[int] = None  # en minutes
+    emotional_state: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "priority": self.priority,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+            "completed": self.completed,
+            "created_at": self.created_at.isoformat(),
+            "category": self.category,
+            "estimated_duration": self.estimated_duration,
+            "emotional_state": self.emotional_state
+        }
+
+
+@dataclass
+class LearningItem:
+    """Item d'apprentissage"""
+    
+    concept: str
+    explanation: str
+    examples: List[str]
+    difficulty_level: int  # 1-5
+    mastery_level: float  # 0.0-1.0
+    last_reviewed: datetime
+    next_review: datetime
+    category: str
+    user_id: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "concept": self.concept,
+            "explanation": self.explanation,
+            "examples": self.examples,
+            "difficulty_level": self.difficulty_level,
+            "mastery_level": self.mastery_level,
+            "last_reviewed": self.last_reviewed.isoformat(),
+            "next_review": self.next_review.isoformat(),
+            "category": self.category,
+            "user_id": self.user_id
+        }
 
 
 class VectorIndex:
@@ -160,6 +224,12 @@ class IntelligentMemorySystem:
         self.working_memory = deque(maxlen=config.short_term_capacity)
         self.short_term_memory = {}  # id -> MemoryItem
         self.long_term_memory = {}   # id -> MemoryItem
+        
+        # Nouvelles structures pour les fonctionnalités avancées
+        self.names_memory = {}  # name -> user_info
+        self.learning_items = {}  # concept_id -> LearningItem
+        self.tdah_tasks = {}  # task_id -> TDAHTask
+        self.emotional_tracking = defaultdict(list)  # user_id -> emotional_states
         
         # Index vectoriels
         self.vector_index = VectorIndex()
@@ -676,3 +746,171 @@ class IntelligentMemorySystem:
         # Trier par timestamp
         timeline.sort(key=lambda x: x[0])
         return timeline
+    
+    # ==================== NOUVELLES FONCTIONNALITÉS ====================
+    
+    async def remember_user_name(self, user_id: str, name: str, nickname: str = "") -> bool:
+        """Retient le nom d'un utilisateur"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                # Créer la table si elle n'existe pas
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_names (
+                        user_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        nickname TEXT,
+                        created_at TEXT,
+                        last_updated TEXT
+                    )
+                """)
+                
+                now = datetime.now().isoformat()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_names 
+                    (user_id, name, nickname, created_at, last_updated)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, name, nickname, now, now))
+                
+                conn.commit()
+                conn.close()
+                
+                # Mettre à jour la mémoire en cache
+                self.names_memory[user_id] = {
+                    "name": name,
+                    "nickname": nickname,
+                    "created_at": now,
+                    "last_updated": now
+                }
+                
+                # Ajouter en mémoire long terme
+                if self.embedding_model:
+                    await self.store_memory(
+                        content=f"L'utilisateur s'appelle {name}" + (f" (surnom: {nickname})" if nickname else ""),
+                        user_id=user_id,
+                        importance=1.0,
+                        memory_type="name",
+                        tags=["nom", "identité", "personnel"]
+                    )
+                
+                logger.info(f"Nom retenu pour {user_id}: {name}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Erreur lors de la sauvegarde du nom: {e}")
+            return False
+    
+    async def get_user_name(self, user_id: str) -> Optional[str]:
+        """Récupère le nom d'un utilisateur"""
+        if user_id in self.names_memory:
+            return self.names_memory[user_id]["name"]
+        
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT name, nickname FROM user_names WHERE user_id = ?", (user_id,))
+                result = cursor.fetchone()
+                conn.close()
+                
+                if result:
+                    return result[0]
+                    
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du nom: {e}")
+        
+        return None
+    
+    async def learn_concept(
+        self,
+        user_id: str,
+        concept_name: str,
+        explanation: str,
+        examples: List[str] = None,
+        category: str = "general",
+        difficulty_level: int = 3
+    ) -> str:
+        """Apprend un nouveau concept enseigné par l'utilisateur"""
+        try:
+            concept_id = f"concept_{hashlib.md5(f'{user_id}_{concept_name}'.encode()).hexdigest()[:12]}"
+            
+            learning_item = LearningItem(
+                concept=concept_name,
+                explanation=explanation,
+                examples=examples or [],
+                difficulty_level=difficulty_level,
+                mastery_level=0.8,  # Niveau initial de maîtrise
+                last_reviewed=datetime.now(),
+                next_review=datetime.now() + timedelta(days=7),
+                category=category,
+                user_id=user_id
+            )
+            
+            # Stocker en mémoire
+            self.learning_items[concept_id] = learning_item
+            
+            # Sauvegarder en base de données
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS learned_concepts (
+                        concept_id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        concept_name TEXT,
+                        explanation TEXT,
+                        examples TEXT,
+                        category TEXT,
+                        difficulty_level INTEGER,
+                        mastery_level REAL,
+                        created_at TEXT,
+                        last_reviewed TEXT
+                    )
+                """)
+                
+                cursor.execute("""
+                    INSERT OR REPLACE INTO learned_concepts 
+                    (concept_id, user_id, concept_name, explanation, examples, category, 
+                     difficulty_level, mastery_level, created_at, last_reviewed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    concept_id, user_id, concept_name, explanation,
+                    json.dumps(examples or []), category, difficulty_level,
+                    learning_item.mastery_level, datetime.now().isoformat(),
+                    learning_item.last_reviewed.isoformat()
+                ))
+                
+                conn.commit()
+                conn.close()
+            
+            # Ajouter en mémoire long terme
+            if self.embedding_model:
+                await self.store_memory(
+                    content=f"Concept appris: {concept_name} - {explanation}",
+                    user_id=user_id,
+                    importance=0.9,
+                    memory_type="learning",
+                    tags=["apprentissage", "concept", category]
+                )
+            
+            logger.info(f"Concept appris pour {user_id}: {concept_name}")
+            return concept_id
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'apprentissage du concept: {e}")
+            return ""
+    
+    async def get_learned_concepts(self, user_id: str, category: str = None) -> List[LearningItem]:
+        """Récupère les concepts appris par un utilisateur"""
+        concepts = []
+        
+        for learning_item in self.learning_items.values():
+            if learning_item.user_id == user_id:
+                if category is None or learning_item.category == category:
+                    concepts.append(learning_item)
+        
+        return sorted(concepts, key=lambda x: x.last_reviewed, reverse=True)

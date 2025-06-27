@@ -190,25 +190,57 @@ class EmoIA:
         try:
             logger.info("🚀 Initialisation d'EmoIA...")
             
-            # Initialiser les composants dans l'ordre
-            await self.emotion_analyzer.initialize()
-            logger.info("✅ Analyseur d'émotions initialisé")
-            
-            await self.personality_analyzer.initialize()
-            logger.info("✅ Analyseur de personnalité initialisé")
-            
-            await self.language_model.initialize()
-            logger.info("✅ Modèle de langage local initialisé")
-            
-            await self.memory_system.initialize()
-            logger.info("✅ Système de mémoire intelligent initialisé")
-            
-            self.is_initialized = True
-            logger.info("🎉 EmoIA entièrement initialisé et prêt !")
-            
+            # Initialisation légère d'abord pour démarrage rapide
+            try:
+                # Initialiser seulement les composants essentiels rapidement
+                await asyncio.wait_for(self.memory_system.initialize(), timeout=10.0)
+                logger.info("✅ Système de mémoire initialisé")
+                
+                # Marquer comme partiellement initialisé
+                self.is_initialized = True
+                logger.info("🎯 EmoIA partiellement initialisé - démarrage rapide")
+                
+                # Continuer l'initialisation complète en arrière-plan
+                asyncio.create_task(self._complete_initialization())
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Initialisation rapide échouée, tentative complète: {e}")
+                await self._complete_initialization()
+                
         except Exception as e:
             logger.error(f"❌ Erreur lors de l'initialisation d'EmoIA: {e}")
-            raise
+            # Ne pas faire échouer complètement, permettre un mode dégradé
+            self.is_initialized = True
+            
+    async def _complete_initialization(self):
+        """Complète l'initialisation en arrière-plan"""
+        try:
+            logger.info("🔄 Initialisation complète en cours...")
+            
+            # Initialiser les analyseurs
+            try:
+                await asyncio.wait_for(self.emotion_analyzer.initialize(), timeout=15.0)
+                logger.info("✅ Analyseur d'émotions initialisé")
+            except Exception as e:
+                logger.warning(f"⚠️ Analyseur d'émotions non disponible: {e}")
+            
+            try:
+                await asyncio.wait_for(self.personality_analyzer.initialize(), timeout=15.0)
+                logger.info("✅ Analyseur de personnalité initialisé")
+            except Exception as e:
+                logger.warning(f"⚠️ Analyseur de personnalité non disponible: {e}")
+            
+            # Initialiser le modèle de langage (peut être long)
+            try:
+                await asyncio.wait_for(self.language_model.initialize(), timeout=60.0)
+                logger.info("✅ Modèle de langage initialisé")
+            except Exception as e:
+                logger.warning(f"⚠️ Modèle de langage non disponible: {e}")
+            
+            logger.info("🎉 EmoIA complètement initialisé!")
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de l'initialisation complète: {e}")
     
     async def process_message(
         self,
