@@ -157,7 +157,7 @@ const MemoryManager: React.FC<{ userId: string }> = ({ userId }) => {
   };
 
   const handleDeleteMemory = async (memoryId: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce souvenir ?')) return;
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce souvenir ?')) return;
 
     try {
       const response = await fetch(`/api/memories/${memoryId}`, {

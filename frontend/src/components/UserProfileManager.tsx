@@ -180,7 +180,7 @@ const UserProfileManager: React.FC = () => {
   };
 
   const handleDeleteProfile = async (userId: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce profil ?')) return;
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce profil ?')) return;
 
     try {
       const response = await fetch(`/api/users/profile/${userId}`, {
