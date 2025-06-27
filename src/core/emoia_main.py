@@ -685,3 +685,625 @@ class EmoIA:
                 "learning_enabled": self.config.learning.continuous_learning
             }
         }
+
+    async def generate_suggestions(
+        self,
+        context: str,
+        user_input: Optional[str] = None,
+        emotional_state: Optional[Dict[str, Any]] = None,
+        max_suggestions: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Génère des suggestions intelligentes basées sur le contexte
+        
+        Args:
+            context: Contexte de conversation
+            user_input: Entrée utilisateur optionnelle
+            emotional_state: État émotionnel optionnel
+            max_suggestions: Nombre maximum de suggestions
+            
+        Returns:
+            Liste de suggestions avec confiance
+        """
+        try:
+            suggestions = []
+            
+            # Analyser le contexte émotionnel
+            if emotional_state:
+                dominant_emotion = emotional_state.get('dominant_emotion', 'neutral')
+                
+                # Suggestions basées sur l'émotion
+                emotion_suggestions = {
+                    'sadness': [
+                        "Voulez-vous parler de ce qui vous préoccupe ?",
+                        "Que diriez-vous d'une activité qui vous remonte le moral ?",
+                        "Parfois, partager ses sentiments peut aider..."
+                    ],
+                    'anxiety': [
+                        "Prenons un moment pour respirer ensemble.",
+                        "Voulez-vous essayer un exercice de relaxation ?",
+                        "Qu'est-ce qui vous aiderait à vous sentir plus calme ?"
+                    ],
+                    'joy': [
+                        "C'est merveilleux de vous voir heureux ! Qu'est-ce qui vous réjouit ?",
+                        "Partagez votre bonne nouvelle !",
+                        "Comment pouvons-nous célébrer ensemble ?"
+                    ],
+                    'anger': [
+                        "Je comprends votre frustration. Voulez-vous en discuter ?",
+                        "Parfois, exprimer sa colère aide à se sentir mieux.",
+                        "Qu'est-ce qui pourrait améliorer la situation ?"
+                    ],
+                    'curiosity': [
+                        "Excellente question ! Explorons cela ensemble.",
+                        "Je peux vous aider à en apprendre davantage sur ce sujet.",
+                        "Quels aspects vous intéressent particulièrement ?"
+                    ]
+                }
+                
+                if dominant_emotion in emotion_suggestions:
+                    for suggestion in emotion_suggestions[dominant_emotion][:max_suggestions]:
+                        suggestions.append({
+                            "text": suggestion,
+                            "type": "emotional_support",
+                            "confidence": 0.8
+                        })
+            
+            # Suggestions contextuelles basées sur les mots-clés
+            if context or user_input:
+                combined_text = f"{context} {user_input or ''}".lower()
+                
+                # Détection de sujets
+                topic_suggestions = {
+                    'travail': [
+                        "Comment se passe votre journée de travail ?",
+                        "Y a-t-il des défis professionnels dont vous aimeriez discuter ?",
+                        "Quels sont vos objectifs professionnels actuels ?"
+                    ],
+                    'famille': [
+                        "Comment va votre famille ?",
+                        "Y a-t-il des moments familiaux que vous aimeriez partager ?",
+                        "Qu'est-ce qui vous rend fier de votre famille ?"
+                    ],
+                    'santé': [
+                        "Comment vous sentez-vous physiquement ?",
+                        "Avez-vous des préoccupations de santé ?",
+                        "Que faites-vous pour prendre soin de vous ?"
+                    ],
+                    'loisirs': [
+                        "Quels sont vos loisirs préférés ?",
+                        "Avez-vous découvert de nouvelles activités récemment ?",
+                        "Comment aimez-vous vous détendre ?"
+                    ]
+                }
+                
+                for topic, topic_suggestions_list in topic_suggestions.items():
+                    if topic in combined_text and len(suggestions) < max_suggestions:
+                        for suggestion in topic_suggestions_list[:2]:
+                            if len(suggestions) < max_suggestions:
+                                suggestions.append({
+                                    "text": suggestion,
+                                    "type": "topic_based",
+                                    "confidence": 0.7
+                                })
+            
+            # Suggestions générales si pas assez spécifiques
+            if len(suggestions) < max_suggestions:
+                general_suggestions = [
+                    "Comment puis-je vous aider aujourd'hui ?",
+                    "Y a-t-il quelque chose dont vous aimeriez parler ?",
+                    "Qu'est-ce qui occupe vos pensées en ce moment ?",
+                    "Comment s'est passée votre journée ?",
+                    "Avez-vous des projets intéressants ?"
+                ]
+                
+                for suggestion in general_suggestions:
+                    if len(suggestions) < max_suggestions:
+                        suggestions.append({
+                            "text": suggestion,
+                            "type": "general",
+                            "confidence": 0.5
+                        })
+            
+            return suggestions[:max_suggestions]
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération de suggestions: {e}")
+            return [{
+                "text": "Comment puis-je vous aider ?",
+                "type": "fallback",
+                "confidence": 0.3
+            }]
+    
+    async def get_conversation_insights(
+        self,
+        user_id: str,
+        conversation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Récupère les insights détaillés d'une conversation
+        
+        Args:
+            user_id: ID de l'utilisateur
+            conversation_id: ID de conversation spécifique (optionnel)
+            
+        Returns:
+            Dict contenant les insights de conversation
+        """
+        try:
+            if user_id not in self.conversation_contexts:
+                return {
+                    "error": "Aucune conversation trouvée pour cet utilisateur",
+                    "user_id": user_id
+                }
+            
+            context = self.conversation_contexts[user_id]
+            
+            # Analyser l'historique de conversation
+            total_exchanges = len(context.conversation_history)
+            if total_exchanges == 0:
+                return {
+                    "message": "Pas encore de conversation avec cet utilisateur",
+                    "user_id": user_id
+                }
+            
+            # Calculer les métriques
+            avg_message_length = sum(len(ex['user_message'].split()) for ex in context.conversation_history) / total_exchanges
+            
+            # Analyser les sujets abordés
+            all_messages = " ".join([ex['user_message'] for ex in context.conversation_history])
+            topics = self._extract_conversation_topics(all_messages)
+            
+            # Analyser l'évolution émotionnelle
+            emotional_journey = []
+            for i, exchange in enumerate(context.conversation_history[-10:]):  # 10 derniers échanges
+                state = exchange.get('emotional_state')
+                if state:
+                    emotional_journey.append({
+                        "exchange_number": i + 1,
+                        "emotion": state.dominant_emotion()[0],
+                        "intensity": state.dominant_emotion()[1],
+                        "timestamp": exchange['timestamp'].isoformat()
+                    })
+            
+            # Calculer l'engagement
+            recent_exchanges = context.conversation_history[-20:]
+            engagement_score = self._calculate_engagement_score(recent_exchanges)
+            
+            # Points clés de la conversation
+            key_moments = self._identify_key_moments(context.conversation_history)
+            
+            insights = {
+                "user_id": user_id,
+                "conversation_stats": {
+                    "total_exchanges": total_exchanges,
+                    "conversation_depth": context.conversation_depth,
+                    "average_message_length": avg_message_length,
+                    "last_interaction": context.last_interaction.isoformat(),
+                    "conversation_duration": str(datetime.now() - context.conversation_history[0]['timestamp'])
+                },
+                "topics_discussed": topics,
+                "emotional_journey": emotional_journey,
+                "emotional_trends": context.get_emotional_trend(),
+                "engagement_metrics": {
+                    "engagement_score": engagement_score,
+                    "response_consistency": self._calculate_response_consistency(recent_exchanges),
+                    "question_ratio": self._calculate_question_ratio(recent_exchanges)
+                },
+                "personality_insights": {
+                    "profile": context.personality_profile.__dict__ if context.personality_profile else {},
+                    "dominant_traits": self._get_dominant_traits(context.personality_profile) if context.personality_profile else []
+                },
+                "key_moments": key_moments,
+                "recommendations": self._generate_conversation_recommendations(context)
+            }
+            
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des insights: {e}")
+            return {
+                "error": f"Erreur lors de l'analyse: {str(e)}",
+                "user_id": user_id
+            }
+    
+    def _extract_conversation_topics(self, text: str) -> List[Dict[str, Any]]:
+        """Extrait les principaux sujets de conversation"""
+        topics = []
+        topic_keywords = {
+            "travail": ["travail", "job", "bureau", "collègue", "projet", "réunion"],
+            "famille": ["famille", "parent", "enfant", "frère", "sœur", "mère", "père"],
+            "santé": ["santé", "médecin", "malade", "fatigue", "douleur", "sommeil"],
+            "loisirs": ["loisir", "sport", "musique", "film", "livre", "voyage"],
+            "émotions": ["triste", "heureux", "anxieux", "stress", "content", "inquiet"],
+            "relations": ["ami", "amour", "relation", "couple", "rencontre"]
+        }
+        
+        text_lower = text.lower()
+        for topic, keywords in topic_keywords.items():
+            count = sum(1 for keyword in keywords if keyword in text_lower)
+            if count > 0:
+                topics.append({
+                    "topic": topic,
+                    "relevance": min(count / 10.0, 1.0),
+                    "keyword_matches": count
+                })
+        
+        return sorted(topics, key=lambda x: x['relevance'], reverse=True)
+    
+    def _calculate_engagement_score(self, exchanges: List[Dict]) -> float:
+        """Calcule le score d'engagement basé sur plusieurs facteurs"""
+        if not exchanges:
+            return 0.0
+        
+        factors = []
+        
+        # Longueur moyenne des messages
+        avg_length = sum(len(ex['user_message'].split()) for ex in exchanges) / len(exchanges)
+        length_score = min(avg_length / 20.0, 1.0)  # Normaliser sur 20 mots
+        factors.append(length_score)
+        
+        # Fréquence des questions
+        questions = sum(1 for ex in exchanges if '?' in ex['user_message'])
+        question_score = questions / len(exchanges)
+        factors.append(question_score)
+        
+        # Diversité émotionnelle
+        emotions = set()
+        for ex in exchanges:
+            if 'emotional_state' in ex and ex['emotional_state']:
+                emotions.add(ex['emotional_state'].dominant_emotion()[0])
+        emotion_diversity_score = len(emotions) / 7.0  # 7 émotions principales
+        factors.append(emotion_diversity_score)
+        
+        # Score final
+        return sum(factors) / len(factors)
+    
+    def _calculate_response_consistency(self, exchanges: List[Dict]) -> float:
+        """Calcule la cohérence des réponses"""
+        if len(exchanges) < 2:
+            return 1.0
+        
+        # Analyser la cohérence temporelle
+        timestamps = [ex['timestamp'] for ex in exchanges]
+        time_diffs = []
+        for i in range(1, len(timestamps)):
+            diff = (timestamps[i] - timestamps[i-1]).total_seconds()
+            time_diffs.append(diff)
+        
+        if not time_diffs:
+            return 1.0
+        
+        # Plus la variance est faible, plus c'est cohérent
+        avg_diff = sum(time_diffs) / len(time_diffs)
+        variance = sum((d - avg_diff) ** 2 for d in time_diffs) / len(time_diffs)
+        
+        # Normaliser (variance élevée = score bas)
+        consistency = 1.0 / (1.0 + variance / 10000)
+        return consistency
+    
+    def _calculate_question_ratio(self, exchanges: List[Dict]) -> float:
+        """Calcule le ratio de questions dans les échanges"""
+        if not exchanges:
+            return 0.0
+        
+        questions = sum(1 for ex in exchanges if '?' in ex['user_message'])
+        return questions / len(exchanges)
+    
+    def _identify_key_moments(self, history: List[Dict]) -> List[Dict[str, Any]]:
+        """Identifie les moments clés de la conversation"""
+        key_moments = []
+        
+        for i, exchange in enumerate(history):
+            importance = exchange.get('importance', 0)
+            
+            # Moments avec haute importance
+            if importance > 0.8:
+                key_moments.append({
+                    "type": "high_importance",
+                    "exchange_index": i,
+                    "message": exchange['user_message'][:100] + "...",
+                    "timestamp": exchange['timestamp'].isoformat(),
+                    "importance": importance
+                })
+            
+            # Changements émotionnels significatifs
+            if i > 0 and 'emotional_state' in exchange and 'emotional_state' in history[i-1]:
+                prev_emotion = history[i-1]['emotional_state'].dominant_emotion()[0]
+                curr_emotion = exchange['emotional_state'].dominant_emotion()[0]
+                
+                if prev_emotion != curr_emotion:
+                    key_moments.append({
+                        "type": "emotion_shift",
+                        "exchange_index": i,
+                        "from_emotion": prev_emotion,
+                        "to_emotion": curr_emotion,
+                        "timestamp": exchange['timestamp'].isoformat()
+                    })
+        
+        return key_moments[-5:]  # Retourner les 5 derniers moments clés
+    
+    def _generate_conversation_recommendations(self, context: ConversationContext) -> List[str]:
+        """Génère des recommandations pour améliorer la conversation"""
+        recommendations = []
+        
+        # Analyser les patterns
+        emotional_trend = context.get_emotional_trend()
+        
+        # Recommandations basées sur les émotions
+        if emotional_trend.get('sadness', 0) > 0.6:
+            recommendations.append("L'utilisateur semble traverser une période difficile. Continuez à offrir du soutien émotionnel.")
+        
+        if emotional_trend.get('anxiety', 0) > 0.5:
+            recommendations.append("Proposez des techniques de relaxation ou des exercices de respiration.")
+        
+        if emotional_trend.get('joy', 0) > 0.7:
+            recommendations.append("L'utilisateur est de bonne humeur. C'est le moment idéal pour des discussions constructives.")
+        
+        # Recommandations basées sur l'engagement
+        if context.conversation_depth < 5:
+            recommendations.append("La conversation est encore superficielle. Posez des questions ouvertes pour approfondir.")
+        elif context.conversation_depth > 20:
+            recommendations.append("Excellente profondeur de conversation. Continuez à maintenir cet engagement.")
+        
+        if not recommendations:
+            recommendations.append("La conversation se déroule bien. Continuez à être attentif et empathique.")
+        
+        return recommendations
+    
+    async def get_mood_history(
+        self,
+        user_id: str,
+        period: str = "week"
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère l'historique d'humeur de l'utilisateur
+        
+        Args:
+            user_id: ID de l'utilisateur
+            period: Période ('day', 'week', 'month')
+            
+        Returns:
+            Liste des points d'humeur
+        """
+        try:
+            # Déterminer la période
+            days = {"day": 1, "week": 7, "month": 30}.get(period, 7)
+            
+            # Récupérer la timeline émotionnelle
+            timeline = await self.memory_system.get_emotional_timeline(user_id, days)
+            
+            # Formater l'historique
+            mood_history = []
+            for timestamp, emotional_state in timeline:
+                emotion, intensity = emotional_state.dominant_emotion()
+                
+                # Calculer valence et arousal
+                positive_emotions = ['joy', 'love', 'excitement', 'contentment']
+                negative_emotions = ['sadness', 'anger', 'fear', 'anxiety', 'disgust']
+                
+                valence = 0.0
+                if emotion in positive_emotions:
+                    valence = intensity
+                elif emotion in negative_emotions:
+                    valence = -intensity
+                
+                arousal = 0.5  # Par défaut
+                high_arousal_emotions = ['excitement', 'anger', 'fear', 'anxiety']
+                low_arousal_emotions = ['contentment', 'sadness']
+                
+                if emotion in high_arousal_emotions:
+                    arousal = 0.5 + (intensity * 0.5)
+                elif emotion in low_arousal_emotions:
+                    arousal = 0.5 - (intensity * 0.3)
+                
+                mood_history.append({
+                    "timestamp": timestamp.isoformat(),
+                    "emotion": emotion,
+                    "intensity": intensity,
+                    "valence": valence,
+                    "arousal": arousal,
+                    "confidence": emotional_state.confidence
+                })
+            
+            return mood_history
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération de l'historique d'humeur: {e}")
+            return []
+    
+    async def get_personality_profile(self, user_id: str) -> Dict[str, Any]:
+        """
+        Récupère le profil de personnalité détaillé de l'utilisateur
+        
+        Args:
+            user_id: ID de l'utilisateur
+            
+        Returns:
+            Profil de personnalité avec insights
+        """
+        try:
+            # Vérifier le cache
+            if user_id in self._personality_cache:
+                profile = self._personality_cache[user_id]
+            else:
+                # Créer un profil par défaut si l'utilisateur n'existe pas
+                if user_id not in self.conversation_contexts:
+                    return {
+                        "error": "Utilisateur non trouvé",
+                        "user_id": user_id
+                    }
+                
+                context = self.conversation_contexts[user_id]
+                user_texts = [ex['user_message'] for ex in context.conversation_history]
+                
+                if user_texts:
+                    profile = await self.personality_analyzer.analyze_personality(
+                        user_texts,
+                        context.emotional_flow
+                    )
+                    self._personality_cache[user_id] = profile
+                else:
+                    profile = PersonalityProfile()
+            
+            # Générer des insights
+            insights = self._generate_personality_insights(profile)
+            
+            return {
+                "user_id": user_id,
+                "profile": {
+                    "big_five": {
+                        "openness": profile.openness,
+                        "conscientiousness": profile.conscientiousness,
+                        "extraversion": profile.extraversion,
+                        "agreeableness": profile.agreeableness,
+                        "neuroticism": profile.neuroticism
+                    },
+                    "emotional_traits": {
+                        "emotional_intelligence": profile.emotional_intelligence,
+                        "empathy_level": profile.empathy_level,
+                        "optimism": profile.optimism
+                    },
+                    "behavioral_traits": {
+                        "creativity": profile.creativity,
+                        "humor_appreciation": profile.humor_appreciation
+                    }
+                },
+                "dominant_traits": self._get_dominant_traits(profile),
+                "insights": insights,
+                "recommendations": self._generate_personality_recommendations(profile),
+                "last_updated": profile.last_updated.isoformat(),
+                "confidence": profile.confidence
+            }
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du profil de personnalité: {e}")
+            return {
+                "error": f"Erreur lors de l'analyse: {str(e)}",
+                "user_id": user_id
+            }
+    
+    def _generate_personality_insights(self, profile: PersonalityProfile) -> List[str]:
+        """Génère des insights basés sur le profil de personnalité"""
+        insights = []
+        
+        # Insights Big Five
+        if profile.openness > 0.7:
+            insights.append("Vous êtes très ouvert aux nouvelles expériences et idées.")
+        elif profile.openness < 0.3:
+            insights.append("Vous préférez les approches familières et éprouvées.")
+        
+        if profile.conscientiousness > 0.7:
+            insights.append("Vous êtes organisé et orienté vers les objectifs.")
+        
+        if profile.extraversion > 0.7:
+            insights.append("Vous tirez de l'énergie des interactions sociales.")
+        elif profile.extraversion < 0.3:
+            insights.append("Vous préférez les environnements calmes et la réflexion.")
+        
+        if profile.agreeableness > 0.8:
+            insights.append("Vous êtes naturellement empathique et bienveillant.")
+        
+        if profile.neuroticism > 0.7:
+            insights.append("Vous êtes sensible et ressentez les émotions intensément.")
+        
+        # Insights émotionnels
+        if profile.emotional_intelligence > 0.8:
+            insights.append("Vous avez une excellente compréhension des émotions.")
+        
+        if profile.creativity > 0.7:
+            insights.append("Vous avez un esprit créatif et innovant.")
+        
+        return insights
+    
+    def _generate_personality_recommendations(self, profile: PersonalityProfile) -> List[str]:
+        """Génère des recommandations basées sur la personnalité"""
+        recommendations = []
+        
+        if profile.neuroticism > 0.7:
+            recommendations.append("Des techniques de gestion du stress pourraient vous être bénéfiques.")
+        
+        if profile.extraversion < 0.3:
+            recommendations.append("Respectez votre besoin de solitude pour vous ressourcer.")
+        
+        if profile.openness > 0.7 and profile.creativity > 0.7:
+            recommendations.append("Explorez de nouveaux projets créatifs pour nourrir votre curiosité.")
+        
+        if profile.conscientiousness < 0.4:
+            recommendations.append("Des outils d'organisation pourraient vous aider dans vos projets.")
+        
+        if not recommendations:
+            recommendations.append("Votre profil est équilibré. Continuez à cultiver vos forces.")
+        
+        return recommendations
+    
+    async def get_current_emotions(self, user_id: str) -> Dict[str, Any]:
+        """
+        Récupère l'état émotionnel actuel de l'utilisateur
+        
+        Args:
+            user_id: ID de l'utilisateur
+            
+        Returns:
+            État émotionnel actuel
+        """
+        try:
+            if user_id not in self.conversation_contexts:
+                return {
+                    "error": "Utilisateur non trouvé",
+                    "user_id": user_id
+                }
+            
+            context = self.conversation_contexts[user_id]
+            
+            # Récupérer le dernier état émotionnel
+            if context.emotional_flow:
+                current_state = context.emotional_flow[-1]
+                emotion, intensity = current_state.dominant_emotion()
+                
+                # Calculer la tendance
+                trend = "stable"
+                if len(context.emotional_flow) >= 2:
+                    prev_emotion, prev_intensity = context.emotional_flow[-2].dominant_emotion()
+                    if intensity > prev_intensity + 0.2:
+                        trend = "increasing"
+                    elif intensity < prev_intensity - 0.2:
+                        trend = "decreasing"
+                
+                return {
+                    "user_id": user_id,
+                    "current_emotion": {
+                        "name": emotion,
+                        "intensity": intensity,
+                        "confidence": current_state.confidence
+                    },
+                    "emotional_state": current_state.to_dict(),
+                    "trend": trend,
+                    "recent_emotions": [
+                        {
+                            "emotion": state.dominant_emotion()[0],
+                            "intensity": state.dominant_emotion()[1],
+                            "timestamp": state.timestamp.isoformat()
+                        }
+                        for state in context.emotional_flow[-5:]
+                    ],
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                return {
+                    "user_id": user_id,
+                    "current_emotion": {
+                        "name": "neutral",
+                        "intensity": 0.0,
+                        "confidence": 0.0
+                    },
+                    "message": "Pas encore d'état émotionnel enregistré",
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des émotions actuelles: {e}")
+            return {
+                "error": f"Erreur lors de l'analyse: {str(e)}",
+                "user_id": user_id
+            }
